@@ -1,0 +1,233 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
+
+/// Handles all communication with the ZCHAT backend AI endpoints.
+/// Change [_baseUrl] to your production server URL when deploying.
+/// 10.0.2.2 = Android emulator loopback to host machine.
+/// For a physical device on the same Wi-Fi, use your machine's LAN IP.
+class AiService {
+  static const _baseUrl = 'http://localhost:5000/api/ai';
+
+  /// Fetches the current Firebase ID token and returns auth + content headers.
+  static Future<Map<String, String>> _authHeaders() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('Not authenticated');
+    final token = await user.getIdToken();
+    return {
+      'Content-Type':  'application/json',
+      'Authorization': 'Bearer $token',
+    };
+  }
+
+  /// Sends the full conversation history to Claude and returns the reply text.
+  ///
+  /// [messages] — the full chat so far, e.g.:
+  ///   [{'role': 'user', 'content': 'Explain recursion'}, ...]
+  ///
+  /// [courseId] — optional active course; Claude uses it to call data tools
+  ///   like grade lookups and deadline checks.
+  static Future<String> chat({
+    required List<Map<String, String>> messages,
+    String? courseId,
+  }) async {
+    final headers = await _authHeaders();
+    final body = jsonEncode({
+      'messages': messages,
+      'courseId': courseId,
+    });
+
+    final response = await http
+        .post(Uri.parse('$_baseUrl/chat'), headers: headers, body: body)
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return data['reply'] as String? ?? 'No response received.';
+    }
+    try {
+      final err = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(err['error'] ?? 'Request failed (${response.statusCode})');
+    } catch (_) {
+      throw Exception('Request failed (${response.statusCode})');
+    }
+  }
+
+  /// Generates a multiple-choice quiz from a past paper stored in the backend.
+  /// Returns a list of question maps: [{question, options, answer}].
+  static Future<List<Map<String, dynamic>>> generateQuiz({
+    required String paperId,
+    required String courseCode,
+    int numQuestions = 5,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse('$_baseUrl/quiz'),
+      headers: headers,
+      body: jsonEncode({
+        'paperId':      paperId,
+        'courseCode':   courseCode,
+        'numQuestions': numQuestions,
+      }),
+    ).timeout(const Duration(seconds: 60));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['questions'] as List? ?? []);
+    }
+    throw Exception('Quiz generation failed');
+  }
+
+  /// Fetches the user's past Q&A history from the database.
+  /// Optionally filtered by [courseId].
+  static Future<List<Map<String, dynamic>>> fetchHistory({
+    String? courseId,
+    int limit = 20,
+  }) async {
+    final headers = await _authHeaders();
+    final uri = Uri.parse('$_baseUrl/history').replace(queryParameters: {
+      'limit': limit.toString(),
+      'courseId': courseId,
+    });
+    final response = await http
+        .get(uri, headers: headers)
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['history'] as List? ?? []);
+    }
+    throw Exception('Could not fetch history');
+  }
+
+  /// Generates AI course summary cards for [courseId].
+  static Future<List<Map<String, dynamic>>> generateCourseSummary({
+    required String courseId,
+    int numTopics = 4,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse('$_baseUrl/summary'),
+      headers: headers,
+      body: jsonEncode({'courseId': courseId, 'numTopics': numTopics}),
+    ).timeout(const Duration(seconds: 60));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['summaries'] as List? ?? []);
+    }
+    throw Exception('Summary generation failed');
+  }
+
+  /// Generates exam-style MCQ questions for [courseCode].
+  static Future<List<Map<String, dynamic>>> generateExamQuestions({
+    required String courseCode,
+    int numQuestions = 5,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse('$_baseUrl/exam-questions'),
+      headers: headers,
+      body: jsonEncode({'courseCode': courseCode, 'numQuestions': numQuestions}),
+    ).timeout(const Duration(seconds: 60));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['questions'] as List? ?? []);
+    }
+    throw Exception('Exam question generation failed');
+  }
+
+  /// Generates a personalised adaptive study plan.
+  static Future<List<Map<String, dynamic>>> generateAdaptivePlan({
+    required String courseId,
+    List<String> weakTopics = const [],
+    Map<String, dynamic> scores = const {},
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse('$_baseUrl/adaptive-plan'),
+      headers: headers,
+      body: jsonEncode({'courseId': courseId, 'weakTopics': weakTopics, 'scores': scores}),
+    ).timeout(const Duration(seconds: 60));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['plan'] as List? ?? []);
+    }
+    throw Exception('Adaptive plan generation failed');
+  }
+
+  /// Sends a push notification to [recipientUid] via the backend.
+  static Future<void> sendNotification({
+    required String recipientUid,
+    required String title,
+    required String body,
+    Map<String, String> data = const {},
+  }) async {
+    final headers = await _authHeaders();
+    await http
+        .post(
+          Uri.parse('http://localhost:5000/api/notifications/send'),
+          headers: headers,
+          body: jsonEncode({'uid': recipientUid, 'title': title, 'body': body, 'data': data}),
+        )
+        .timeout(const Duration(seconds: 10));
+  }
+
+  /// Summarises a list of chat messages (plain strings) using Claude.
+  /// Returns a summary string with bullet points.
+  static Future<String> summarizeChat({
+    required List<String> messages,
+    String chatName = 'this conversation',
+  }) async {
+    final headers = await _authHeaders();
+    final transcript = messages.join('\n');
+    final response = await http.post(
+      Uri.parse('$_baseUrl/chat'),
+      headers: headers,
+      body: jsonEncode({
+        'messages': [
+          {
+            'role': 'user',
+            'content':
+                'You are a helpful assistant. Summarise the following group chat named "$chatName" '
+                'into 3–5 concise bullet points highlighting key decisions, action items, and important '
+                'information. Format each bullet starting with "• ". Keep each bullet under 20 words.\n\n'
+                'Chat transcript:\n$transcript',
+          }
+        ],
+      }),
+    ).timeout(const Duration(seconds: 60));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return data['reply'] as String? ?? 'Could not generate summary.';
+    }
+    throw Exception('Summary request failed (${response.statusCode})');
+  }
+
+  /// Gets AI feedback on a submitted assignment text.
+  static Future<Map<String, dynamic>> getAssignmentFeedback({
+    required String submissionText,
+    String assignmentTitle = 'Assignment',
+    int totalMarks = 100,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse('$_baseUrl/feedback'),
+      headers: headers,
+      body: jsonEncode({
+        'submissionText': submissionText,
+        'assignmentTitle': assignmentTitle,
+        'totalMarks': totalMarks,
+      }),
+    ).timeout(const Duration(seconds: 60));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return data['feedback'] as Map<String, dynamic>? ?? {};
+    }
+    throw Exception('Feedback generation failed');
+  }
+}

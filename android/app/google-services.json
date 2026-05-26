@@ -1,0 +1,38 @@
+{
+  "project_info": {
+    "project_number": "254721999502",
+    "project_id": "zchat-c0533",
+    "storage_bucket": "zchat-c0533.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:254721999502:android:4e83cf62cede91432bffdf",
+        "android_client_info": {
+          "package_name": "com.unza.unza_z_chat"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "254721999502-android",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.unza.unza_z_chat",
+            "certificate_hash": "05a5301b4f4717a1912b97d38bfa0678481b0e36"
+          }
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBHZA-pwvOiKHpSd2WNs-yK7B7LUTHdjWo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

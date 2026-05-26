@@ -1,0 +1,48 @@
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+lib/generated/
+
+# Android
+android/local.properties
+android/key.properties
+*.jks
+android/.gradle/
+android/app/build/
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/app.flx
+ios/Flutter/app.zip
+ios/Flutter/flutter_assets/
+ios/ServiceDefinitions.json
+ios/Runner/GeneratedPluginRegistrant.*
+
+# Firebase secrets — add these manually in Codemagic env vars
+# google-services.json      ← keep in repo (private repo only)
+# GoogleService-Info.plist  ← DO NOT commit, use Codemagic env var
+
+# macOS
+macos/Flutter/GeneratedPluginRegistrant.swift
+macos/Flutter/Flutter-Debug.xcconfig
+macos/Flutter/Flutter-Release.xcconfig
+macos/.symlinks/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Misc
+*.log
+*.lock
+pubspec.lock
