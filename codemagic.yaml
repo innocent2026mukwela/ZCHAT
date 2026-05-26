@@ -18,7 +18,8 @@ workflows:
       #   GOOGLE_SERVICE_INFO_PLIST  ← base64 encoded GoogleService-Info.plist
       #   APP_STORE_CONNECT_ISSUER_ID (optional, for TestFlight)
       groups:
-        - firebase_ios   # group containing GOOGLE_SERVICE_INFO_PLIST
+        - firebase_ios        # contains: GOOGLE_SERVICE_INFO_PLIST
+        - apple_credentials   # contains: APP_STORE_CONNECT_APPLE_ID, APP_STORE_CONNECT_PASSWORD, APPLE_UDID
 
     triggering:
       events:
@@ -44,10 +45,19 @@ workflows:
       - name: Set up iOS code signing
         script: |
           keychain initialize
+          # Register device UDID if provided
+          if [ -n "$APPLE_UDID" ]; then
+            app-store-connect devices register \
+              --name "Test iPhone" \
+              --platform IOS \
+              --udid "$APPLE_UDID" || true
+          fi
+          # Create certificate + provisioning profile using Apple ID
           app-store-connect fetch-signing-files \
             --type IOS_APP_DEVELOPMENT \
             --bundle-id "$BUNDLE_ID" \
-            --create
+            --create \
+            --platform IOS
           keychain add-certificates
           xcode-project use-profiles
 
