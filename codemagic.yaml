@@ -7,7 +7,7 @@ workflows:
     instance_type: mac_mini_m2
 
     environment:
-      flutter: 3.32.0
+      flutter: 3.41.8
       xcode: latest
       cocoapods: default
       vars:
@@ -90,7 +90,7 @@ workflows:
     instance_type: linux_x2
 
     environment:
-      flutter: 3.32.0
+      flutter: 3.41.8
 
     scripts:
       - name: Get Flutter packages
