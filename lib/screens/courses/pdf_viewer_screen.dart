@@ -1,6 +1,9 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:go_router/go_router.dart';
+import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import '../../utils/glass.dart';
 
 class PdfViewerScreen extends StatefulWidget {
@@ -12,7 +15,18 @@ class PdfViewerScreen extends StatefulWidget {
 }
 
 class _PdfViewerScreenState extends State<PdfViewerScreen> {
-  bool _downloaded = false;
+  final _pdfKey = GlobalKey<SfPdfViewerState>();
+  final _ctrl   = PdfViewerController();
+  int  _currentPage = 1;
+  int  _totalPages  = 0;
+  bool _loading     = true;
+  bool _error       = false;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -25,6 +39,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         child: Stack(children: [
           const GlowOrbs(),
           Column(children: [
+            // App bar
             ClipRect(
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
@@ -38,90 +53,159 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                         const Text('Past Paper', style: TextStyle(color: Colors.white54, fontSize: 11)),
                       ])),
                       IconButton(
-                        icon: Icon(_downloaded ? Icons.download_done_rounded : Icons.download_rounded,
-                          color: _downloaded ? const Color(0xFF86EFAC) : Colors.white),
+                        icon: const Icon(Icons.share_rounded, color: Colors.white),
                         onPressed: () {
-                          setState(() => _downloaded = true);
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: const Text('Downloaded'), backgroundColor: const Color(0xFF2563EB),
-                            behavior: SnackBarBehavior.floating, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          Clipboard.setData(ClipboardData(text: widget.url));
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                            content: Text('Link copied to clipboard'),
+                            backgroundColor: Color(0xFF2563EB),
+                            behavior: SnackBarBehavior.floating,
                           ));
                         },
                       ),
-                      IconButton(icon: const Icon(Icons.share_rounded, color: Colors.white), onPressed: () {}),
                     ])),
                     // Toolbar
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
                       child: Row(children: [
-                        _Tool(icon: Icons.zoom_in_rounded),
-                        _Tool(icon: Icons.zoom_out_rounded),
-                        _Tool(icon: Icons.fit_screen_rounded),
+                        _Tool(icon: Icons.zoom_in_rounded, onTap: () => _ctrl.zoomLevel = (_ctrl.zoomLevel + 0.25).clamp(0.5, 4.0)),
+                        _Tool(icon: Icons.zoom_out_rounded, onTap: () => _ctrl.zoomLevel = (_ctrl.zoomLevel - 0.25).clamp(0.5, 4.0)),
+                        _Tool(icon: Icons.fit_screen_rounded, onTap: () { _ctrl.zoomLevel = 1.0; }),
                         const Spacer(),
-                        Text('Page 1 / 8', style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 12)),
+                        if (_totalPages > 0)
+                          Text('Page $_currentPage / $_totalPages', style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 12)),
                         const Spacer(),
-                        _Tool(icon: Icons.search_rounded),
-                        _Tool(icon: Icons.bookmark_border_rounded),
+                        _Tool(icon: Icons.search_rounded, onTap: () => _pdfKey.currentState?.openBookmarkView()),
+                        _Tool(icon: Icons.keyboard_arrow_up_rounded, onTap: () => _ctrl.previousPage()),
+                        _Tool(icon: Icons.keyboard_arrow_down_rounded, onTap: () => _ctrl.nextPage()),
                       ]),
                     ),
                   ])),
                 ),
               ),
             ),
+
+            // PDF content
             Expanded(
-              child: Center(
-                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  GlassCard(
-                    borderRadius: BorderRadius.circular(20),
-                    padding: const EdgeInsets.all(32),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Container(
-                        width: 80, height: 96,
-                        decoration: BoxDecoration(color: Colors.red.withAlpha(40), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.red.withAlpha(60))),
-                        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                          const Icon(Icons.picture_as_pdf_rounded, color: Colors.redAccent, size: 40),
-                          Text('PDF', style: TextStyle(color: Colors.redAccent.withAlpha(200), fontSize: 10, fontWeight: FontWeight.w700)),
-                        ]),
+              child: widget.url.isEmpty
+                  ? _EmptyState(title: widget.title, onQuiz: () => _navigateToQuiz(context))
+                  : Stack(children: [
+                      SfPdfViewer.network(
+                        widget.url,
+                        key: _pdfKey,
+                        controller: _ctrl,
+                        onDocumentLoaded: (details) {
+                          setState(() {
+                            _totalPages = details.document.pages.count;
+                            _loading = false;
+                          });
+                        },
+                        onDocumentLoadFailed: (details) {
+                          setState(() { _loading = false; _error = true; });
+                        },
+                        onPageChanged: (details) {
+                          setState(() => _currentPage = details.newPageNumber);
+                        },
                       ),
-                      const SizedBox(height: 16),
-                      Text(widget.title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
-                      const SizedBox(height: 6),
-                      Text('PDF viewer', style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 13)),
+                      if (_loading)
+                        const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF))),
+                      if (_error)
+                        _EmptyState(title: widget.title, onQuiz: () => _navigateToQuiz(context)),
                     ]),
-                  ).animate().scale(duration: 400.ms, curve: Curves.easeOut),
-                  const SizedBox(height: 28),
-                  SizedBox(
-                    width: 220,
-                    child: ElevatedButton.icon(
-                      onPressed: () => setState(() => _downloaded = true),
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), minimumSize: const Size(220, 48), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                      icon: Icon(_downloaded ? Icons.check_rounded : Icons.download_rounded),
-                      label: Text(_downloaded ? 'Downloaded ✓' : 'Download PDF', style: const TextStyle(fontWeight: FontWeight.w700)),
-                    ),
-                  ).animate(delay: 150.ms).fadeIn(),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: 220,
-                    child: OutlinedButton.icon(
-                      onPressed: () {},
-                      style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFB794F4), side: const BorderSide(color: Color(0xFF7C3AED)), minimumSize: const Size(220, 44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                      icon: const Icon(Icons.quiz_outlined),
-                      label: const Text('Generate Quiz', style: TextStyle(fontWeight: FontWeight.w600)),
-                    ),
-                  ).animate(delay: 200.ms).fadeIn(),
-                ]),
-              ),
             ),
+
+            // Bottom action bar
+            if (!_loading && !_error && widget.url.isNotEmpty)
+              Container(
+                color: Colors.black.withAlpha(80),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                child: SafeArea(
+                  top: false,
+                  child: Row(children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _navigateToQuiz(context),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFFB794F4),
+                          side: const BorderSide(color: Color(0xFF7C3AED)),
+                          minimumSize: const Size(double.infinity, 44),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.quiz_outlined),
+                        label: const Text('Generate Quiz', style: TextStyle(fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ]),
+                ),
+              ).animate().slideY(begin: 0.3, end: 0),
           ]),
         ]),
       ),
     );
   }
+
+  void _navigateToQuiz(BuildContext context) {
+    // Extract courseCode from title (e.g. "CS3201 2023 Paper" → "CS3201")
+    final parts  = widget.title.split(' ');
+    final course = parts.isNotEmpty ? parts.first : 'course';
+    context.push('/ai/quiz/$course');
+  }
 }
+
+// ── Empty / error state ───────────────────────────────────────────────────────
+
+class _EmptyState extends StatelessWidget {
+  final String title;
+  final VoidCallback onQuiz;
+  const _EmptyState({required this.title, required this.onQuiz});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        GlassCard(
+          borderRadius: BorderRadius.circular(20),
+          padding: const EdgeInsets.all(32),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 80, height: 96,
+              decoration: BoxDecoration(color: Colors.red.withAlpha(40), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.red.withAlpha(60))),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.picture_as_pdf_rounded, color: Colors.redAccent, size: 40),
+                Text('PDF', style: TextStyle(color: Colors.redAccent.withAlpha(200), fontSize: 10, fontWeight: FontWeight.w700)),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700), textAlign: TextAlign.center),
+            const SizedBox(height: 6),
+            Text('PDF not available', style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 13)),
+          ]),
+        ).animate().scale(duration: 400.ms, curve: Curves.easeOut),
+        const SizedBox(height: 28),
+        SizedBox(
+          width: 220,
+          child: OutlinedButton.icon(
+            onPressed: onQuiz,
+            style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFB794F4), side: const BorderSide(color: Color(0xFF7C3AED)), minimumSize: const Size(220, 44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            icon: const Icon(Icons.quiz_outlined),
+            label: const Text('Generate Quiz', style: TextStyle(fontWeight: FontWeight.w600)),
+          ),
+        ).animate(delay: 200.ms).fadeIn(),
+      ]),
+    );
+  }
+}
+
+// ── Toolbar button ────────────────────────────────────────────────────────────
 
 class _Tool extends StatelessWidget {
   final IconData icon;
-  const _Tool({required this.icon});
+  final VoidCallback onTap;
+  const _Tool({required this.icon, required this.onTap});
   @override
-  Widget build(BuildContext context) => IconButton(icon: Icon(icon, color: Colors.white.withAlpha(160), size: 18), onPressed: () {}, visualDensity: VisualDensity.compact);
+  Widget build(BuildContext context) => IconButton(
+    icon: Icon(icon, color: Colors.white.withAlpha(160), size: 18),
+    onPressed: onTap,
+    visualDensity: VisualDensity.compact,
+  );
 }

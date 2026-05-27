@@ -97,7 +97,7 @@ class _GlassHomeAppBar extends StatelessWidget {
                       ),
                       IconButton(
                         icon: const Icon(Icons.camera_alt_outlined, color: Colors.white),
-                        onPressed: () {},
+                        onPressed: () => context.push('/status'),
                       ),
                       PopupMenuButton<String>(
                         icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
@@ -564,7 +564,7 @@ class _StatusTab extends StatelessWidget {
           ]),
           title: 'My status',
           subtitle: 'Tap to add status update',
-          onTap: () {},
+          onTap: () => context.push('/status'),
         ),
         Divider(color: Colors.white.withAlpha(15), height: 1),
         _SectionHeader('Recent updates'),

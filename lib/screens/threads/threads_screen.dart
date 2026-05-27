@@ -265,7 +265,15 @@ class _ThreadCard extends StatelessWidget {
                 onTap: () { HapticFeedback.lightImpact(); ThreadsService.toggleRepost(id, isReposted); },
               ),
               const SizedBox(width: 20),
-              _ActionBtn(icon: Icons.send_outlined, count: null, onTap: () {}),
+              _ActionBtn(icon: Icons.send_outlined, count: null, onTap: () {
+                HapticFeedback.lightImpact();
+                Clipboard.setData(ClipboardData(text: 'https://zchat.unza.zm/threads/$id'));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Link copied to clipboard'),
+                  backgroundColor: Color(0xFF2563EB),
+                  behavior: SnackBarBehavior.floating,
+                ));
+              }),
             ]),
           ])),
         ]),

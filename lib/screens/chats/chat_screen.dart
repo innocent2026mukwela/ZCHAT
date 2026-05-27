@@ -256,6 +256,11 @@ class _ChatScreenState extends State<ChatScreen>
     if (mounted) setState(() => _pinnedMessage = {'id': msg.id, 'text': msg.text});
   }
 
+  void _scrollToPinnedMessage() {
+    if (!_scroll.hasClients) return;
+    _scroll.animateTo(0, duration: const Duration(milliseconds: 400), curve: Curves.easeOut);
+  }
+
   Future<void> _unpinMessage() async {
     if (_pinnedMessage == null) return;
     final id = _pinnedMessage!['id'] as String?;
@@ -510,6 +515,7 @@ class _ChatScreenState extends State<ChatScreen>
         isGroup: isGroup,
         onVoiceCall: _isDirect ? () { Navigator.pop(context); _startCall(video: false); } : null,
         onVideoCall: _isDirect ? () { Navigator.pop(context); _startCall(video: true);  } : null,
+        onSearchTap: () => setState(() => _searchMode = true),
       ),
     );
   }
@@ -539,7 +545,7 @@ class _ChatScreenState extends State<ChatScreen>
             if (_pinnedMessage != null)
               _PinnedBanner(
                 text: _pinnedMessage!['text'] as String? ?? 'Pinned message',
-                onTap: () {},
+                onTap: _scrollToPinnedMessage,
                 onDismiss: _unpinMessage,
               ),
             Expanded(child: _buildMessages()),
@@ -2128,6 +2134,7 @@ class _ContactInfoSheet extends StatefulWidget {
   final bool     isGroup;
   final VoidCallback? onVoiceCall;
   final VoidCallback? onVideoCall;
+  final VoidCallback? onSearchTap;
 
   const _ContactInfoSheet({
     required this.name,
@@ -2136,6 +2143,7 @@ class _ContactInfoSheet extends StatefulWidget {
     required this.isGroup,
     this.onVoiceCall,
     this.onVideoCall,
+    this.onSearchTap,
   });
 
   @override
@@ -2289,8 +2297,15 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
                   _InfoAction(icon: Icons.call_outlined,     label: 'Call',  onTap: widget.onVoiceCall),
                   _InfoAction(icon: Icons.videocam_outlined, label: 'Video', onTap: widget.onVideoCall),
                 ],
-                _InfoAction(icon: Icons.search_rounded,             label: 'Search', onTap: () {}),
-                _InfoAction(icon: Icons.notifications_outlined,     label: 'Mute',   onTap: () {}),
+                _InfoAction(icon: Icons.search_rounded, label: 'Search', onTap: () {
+                  Navigator.pop(context);
+                  widget.onSearchTap?.call();
+                }),
+                _InfoAction(
+                  icon: _isMuted ? Icons.notifications_off_outlined : Icons.notifications_outlined,
+                  label: _isMuted ? 'Unmute' : 'Mute',
+                  onTap: () { _toggleMute(); Navigator.pop(context); },
+                ),
               ]),
             ),
             Divider(color: Colors.white.withAlpha(12), height: 28),

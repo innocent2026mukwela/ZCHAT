@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -359,7 +360,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           _Row(icon: Icons.info_outline_rounded,   label: 'About',      value: _about.isNotEmpty ? _about : 'Tap to add',
                             onTap: _editAbout, valueMuted: _about.isEmpty),
                           _Div(),
-                          _Row(icon: Icons.phone_outlined,         label: 'Phone',      value: _phone.isNotEmpty ? _phone : '—', onTap: () {}),
+                          _Row(icon: Icons.phone_outlined, label: 'Phone', value: _phone.isNotEmpty ? _phone : '—', onTap: () {
+                            if (_phone.isNotEmpty) {
+                              Clipboard.setData(ClipboardData(text: _phone));
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Phone number copied'), behavior: SnackBarBehavior.floating));
+                            }
+                          }),
                           _Div(),
                           _Row(icon: Icons.badge_outlined,         label: 'Student ID', value: _studentId.isNotEmpty ? _studentId : 'Tap to add',
                             onTap: _editStudentId, valueMuted: _studentId.isEmpty),
@@ -426,9 +432,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         _Section(title: 'ACCOUNT', color: const Color(0xFF86EFAC), children: [
                           _Row(icon: Icons.qr_code_rounded,       label: 'My QR Code',  value: '', onTap: _showQr),
                           _Div(),
-                          _Row(icon: Icons.security_rounded,      label: 'Two-step verification', value: 'Off', onTap: () {}),
+                          _Row(icon: Icons.security_rounded, label: 'Two-step verification', value: 'Off', onTap: () {
+                            showDialog(context: context, builder: (_) => AlertDialog(
+                              backgroundColor: const Color(0xFF0E1829),
+                              title: const Text('Two-step verification', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                              content: const Text('Two-step verification adds an extra layer of security to your account. This feature will be available in a future update.', style: TextStyle(color: Colors.white70)),
+                              actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK', style: TextStyle(color: Color(0xFF4F8AFF))))],
+                            ));
+                          }),
                           _Div(),
-                          _Row(icon: Icons.info_outline_rounded,  label: 'App version', value: 'v1.0.0', onTap: () {}),
+                          _Row(icon: Icons.info_outline_rounded, label: 'App version', value: 'v1.0.0', onTap: () {
+                            showAboutDialog(
+                              context: context,
+                              applicationName: 'ZCHAT',
+                              applicationVersion: 'v1.0.0',
+                              applicationLegalese: '© 2025 University of Zambia\nBuilt by Innocent Tembo',
+                            );
+                          }),
                         ]).animate(delay: 140.ms).fadeIn(),
                         const SizedBox(height: 12),
                         GlassCard(
