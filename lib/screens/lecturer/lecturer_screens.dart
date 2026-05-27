@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
 import '../../services/ai_service.dart';
 import '../../services/zego_service.dart';
@@ -374,8 +375,13 @@ class LecturerClassroomScreen extends StatelessWidget {
           const SizedBox(height: 14),
           _ActionGrid(actions: [
             _LecturerAction(Icons.present_to_all_rounded, 'Share screen', 'Mirror slides or demos', onTap: () => context.push('/courses')),
-            _LecturerAction(Icons.fiber_manual_record_rounded, 'Record', 'Save session replay', onTap: () {}),
-            _LecturerAction(Icons.qr_code_2_rounded, 'Attendance', 'Generate class code', onTap: () {}),
+            _LecturerAction(Icons.fiber_manual_record_rounded, 'Record', 'Save session replay', onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('Recording starts automatically when you begin a live session.'),
+                backgroundColor: Color(0xFF2563EB), behavior: SnackBarBehavior.floating,
+              ));
+            }),
+            _LecturerAction(Icons.qr_code_2_rounded, 'Attendance', 'Generate class code', onTap: () => _showAttendanceQr(context)),
             _LecturerAction(Icons.upload_file_rounded, 'Resources', 'Send files to class', onTap: () => context.push('/courses')),
           ]),
         ],
@@ -393,7 +399,7 @@ class LecturerAiScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return _LecturerScaffold(
       title: 'AI Tools',
-      actions: [IconButton(icon: const Icon(Icons.tune_rounded, color: Colors.white), onPressed: () {})],
+      actions: [IconButton(icon: const Icon(Icons.tune_rounded, color: Colors.white), onPressed: () => context.push('/ai'))],
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 92),
         children: [
@@ -537,6 +543,30 @@ class _LecturerAppBar extends StatelessWidget {
       ),
     );
   }
+}
+
+void _showAttendanceQr(BuildContext context) {
+  final uid     = FirebaseAuth.instance.currentUser?.uid ?? 'unknown';
+  final classId = 'class_${uid}_${DateTime.now().millisecondsSinceEpoch ~/ 600000}';
+  showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      backgroundColor: const Color(0xFF0E1829),
+      title: const Text('Attendance QR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+          child: QrImageView(data: classId, version: QrVersions.auto, size: 200),
+        ),
+        const SizedBox(height: 12),
+        Text('Students scan to mark attendance', style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 13), textAlign: TextAlign.center),
+        const SizedBox(height: 4),
+        Text(classId, style: TextStyle(color: Colors.white.withAlpha(80), fontSize: 10), textAlign: TextAlign.center),
+      ]),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close', style: TextStyle(color: Color(0xFF4F8AFF))))],
+    ),
+  );
 }
 
 // ── Live class card ───────────────────────────────────────────────────────────

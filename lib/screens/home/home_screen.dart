@@ -4,8 +4,12 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:timeago/timeago.dart' as timeago;
 import '../../services/chat_service.dart';
 import '../../services/call_service.dart';
+import '../../services/status_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
@@ -533,66 +537,161 @@ class _ChatOptionsSheet extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════
 // STATUS TAB
 // ══════════════════════════════════════════════════════════════════════
-class _StatusTab extends StatelessWidget {
+class _StatusTab extends StatefulWidget {
   const _StatusTab();
+  @override
+  State<_StatusTab> createState() => _StatusTabState();
+}
 
-  static const _recent = [
-    _StatusItem(name: 'Chanda Phiri',  time: '10 min ago',  count: 1, color: Color(0xFF1565C0)),
-    _StatusItem(name: 'Dr. Mwale',     time: '32 min ago',  count: 3, color: Color(0xFF2E7D32)),
-    _StatusItem(name: 'Study Squad',   time: '1 hour ago',  count: 2, color: Color(0xFF6A1B9A)),
-    _StatusItem(name: 'Mulenga Banda', time: '2 hours ago', count: 1, color: Color(0xFFAD1457)),
-  ];
-  static const _muted = [
-    _StatusItem(name: 'CS 3201 Group', time: '3 hours ago', count: 1, color: Color(0xFFE65100)),
-    _StatusItem(name: 'Math 201',      time: 'Yesterday',   count: 2, color: Color(0xFF00695C)),
-  ];
+class _StatusTabState extends State<_StatusTab> {
+  final _myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+  List<Map<String, dynamic>> _myItems        = [];
+  List<Map<String, dynamic>> _contactStatuses = [];
+  Map<String, dynamic>?      _myProfile;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMyProfile();
+    StatusService.myStatusStream().listen((items) {
+      if (mounted) setState(() => _myItems = items);
+    });
+    _loadContacts();
+  }
+
+  Future<void> _loadMyProfile() async {
+    if (_myUid.isEmpty) return;
+    final doc = await FirebaseFirestore.instance.collection('users').doc(_myUid).get();
+    if (mounted) setState(() => _myProfile = doc.data());
+  }
+
+  Future<void> _loadContacts() async {
+    setState(() => _loading = true);
+    try {
+      final uids = await _zchatContactUids();
+      final statuses = await StatusService.fetchContactStatuses(uids);
+      if (mounted) setState(() { _contactStatuses = statuses; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<List<String>> _zchatContactUids() async {
+    final status = await Permission.contacts.request();
+    if (!status.isGranted) return [];
+    final contacts = await FlutterContacts.getContacts(withProperties: true);
+    final phones = <String>{};
+    for (final c in contacts) {
+      for (final p in c.phones) {
+        final n = _toE164(p.number);
+        if (n.isNotEmpty) phones.add(n);
+      }
+    }
+    if (phones.isEmpty) return [];
+    final uids = <String>[];
+    final list = phones.toList();
+    for (int i = 0; i < list.length; i += 30) {
+      final chunk = list.sublist(i, (i + 30).clamp(0, list.length));
+      final snap = await FirebaseFirestore.instance
+          .collection('users').where('phoneNumber', whereIn: chunk).get();
+      for (final doc in snap.docs) {
+        if (doc.id != _myUid) uids.add(doc.id);
+      }
+    }
+    return uids;
+  }
+
+  String _toE164(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return '';
+    if (digits.startsWith('260') && digits.length >= 12) return '+$digits';
+    if (digits.startsWith('0')   && digits.length >= 10) return '+260${digits.substring(1)}';
+    if (digits.length == 9) return '+260$digits';
+    return '';
+  }
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.only(top: 8, bottom: 80),
-      children: [
-        // My status
-        _StatusRow(
-          leading: Stack(children: [
-            const CircleAvatar(radius: 26, backgroundColor: Color(0xFF2563EB),
-              child: Icon(Icons.person_rounded, color: Colors.white, size: 28)),
-            Positioned(bottom: 0, right: 0,
-              child: Container(width: 20, height: 20,
-                decoration: BoxDecoration(color: const Color(0xFF2563EB), shape: BoxShape.circle, border: Border.all(color: Colors.white.withAlpha(30), width: 2)),
-                child: const Icon(Icons.add, color: Colors.white, size: 12))),
-          ]),
-          title: 'My status',
-          subtitle: 'Tap to add status update',
-          onTap: () => context.push('/status'),
-        ),
-        Divider(color: Colors.white.withAlpha(15), height: 1),
-        _SectionHeader('Recent updates'),
-        ..._recent.asMap().entries.map((e) => _StatusRow(
-          leading: _StatusRing(item: e.value),
-          title: e.value.name,
-          subtitle: e.value.time,
-          trailing: Text('${e.value.count} update${e.value.count != 1 ? 's' : ''}',
-            style: TextStyle(fontSize: 12, color: Colors.white.withAlpha(120))),
-          onTap: () => _openViewer(context, e.value),
-        ).animate(delay: (e.key * 40).ms).fadeIn()),
-        _SectionHeader('Muted'),
-        ..._muted.asMap().entries.map((e) => _StatusRow(
-          leading: _StatusRing(item: e.value, muted: true),
-          title: e.value.name,
-          subtitle: e.value.time,
-          onTap: () => _openViewer(context, e.value),
-        ).animate(delay: (e.key * 40).ms).fadeIn()),
-        const SizedBox(height: 80),
-      ],
-    );
-  }
+    final myName     = _myProfile?['displayName'] as String? ?? _myProfile?['fullName'] as String? ?? 'My status';
+    final myPhoto    = _myProfile?['photoUrl'] as String? ?? '';
+    final mySubtitle = _myItems.isEmpty
+        ? 'Tap to add status update'
+        : 'My update · ${timeago.format((_myItems.last['createdAt'] as dynamic)?.toDate() ?? DateTime.now())}';
 
-  void _openViewer(BuildContext context, _StatusItem item) {
-    Navigator.of(context).push(PageRouteBuilder(
-      opaque: false,
-      pageBuilder: (_, __, ___) => _StatusViewer(item: item),
-    ));
+    final recent = _contactStatuses.where((s) => s['hasUnread'] == true).toList();
+    final viewed = _contactStatuses.where((s) => s['hasUnread'] != true).toList();
+
+    return RefreshIndicator(
+      onRefresh: _loadContacts,
+      color: const Color(0xFF4F8AFF),
+      child: ListView(
+        padding: const EdgeInsets.only(top: 8, bottom: 80),
+        children: [
+          // My status
+          _StatusRow(
+            leading: Stack(children: [
+              CircleAvatar(radius: 26,
+                backgroundColor: const Color(0xFF2563EB),
+                backgroundImage: myPhoto.isNotEmpty ? NetworkImage(myPhoto) : null,
+                child: myPhoto.isEmpty ? const Icon(Icons.person_rounded, color: Colors.white, size: 28) : null),
+              Positioned(bottom: 0, right: 0,
+                child: Container(width: 20, height: 20,
+                  decoration: BoxDecoration(color: const Color(0xFF2563EB), shape: BoxShape.circle, border: Border.all(color: Colors.white.withAlpha(30), width: 2)),
+                  child: const Icon(Icons.add, color: Colors.white, size: 12))),
+            ]),
+            title: myName,
+            subtitle: mySubtitle,
+            onTap: () => context.push('/status'),
+          ),
+          Divider(color: Colors.white.withAlpha(15), height: 1),
+
+          if (_loading)
+            const Padding(padding: EdgeInsets.only(top: 40), child: Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF))))
+          else if (_contactStatuses.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 48),
+              child: Center(child: Text('No recent updates from contacts',
+                style: TextStyle(color: Colors.white.withAlpha(120)))),
+            )
+          else ...[
+            if (recent.isNotEmpty) ...[
+              _SectionHeader('Recent updates'),
+              ...recent.asMap().entries.map((e) {
+                final s     = e.value;
+                final items = s['items'] as List? ?? [];
+                final ts    = items.isNotEmpty ? (items.last['createdAt'] as dynamic)?.toDate() : null;
+                final time  = ts != null ? timeago.format(ts) : '';
+                return _StatusRow(
+                  leading: _LiveStatusRing(photoUrl: s['photoUrl'] as String? ?? '', name: s['name'] as String? ?? '', hasUnread: true),
+                  title: s['name'] as String? ?? '',
+                  subtitle: time,
+                  trailing: Text('${items.length} update${items.length != 1 ? 's' : ''}',
+                    style: TextStyle(fontSize: 12, color: Colors.white.withAlpha(120))),
+                  onTap: () => context.push('/status'),
+                ).animate(delay: (e.key * 40).ms).fadeIn();
+              }),
+            ],
+            if (viewed.isNotEmpty) ...[
+              _SectionHeader('Viewed'),
+              ...viewed.asMap().entries.map((e) {
+                final s     = e.value;
+                final items = s['items'] as List? ?? [];
+                final ts    = items.isNotEmpty ? (items.last['createdAt'] as dynamic)?.toDate() : null;
+                final time  = ts != null ? timeago.format(ts) : '';
+                return _StatusRow(
+                  leading: _LiveStatusRing(photoUrl: s['photoUrl'] as String? ?? '', name: s['name'] as String? ?? '', hasUnread: false),
+                  title: s['name'] as String? ?? '',
+                  subtitle: time,
+                  onTap: () => context.push('/status'),
+                ).animate(delay: (e.key * 40).ms).fadeIn();
+              }),
+            ],
+          ],
+          const SizedBox(height: 80),
+        ],
+      ),
+    );
   }
 }
 
@@ -632,114 +731,38 @@ class _StatusRow extends StatelessWidget {
   );
 }
 
-class _StatusRing extends StatelessWidget {
-  final _StatusItem item;
-  final bool muted;
-  const _StatusRing({required this.item, this.muted = false});
+class _LiveStatusRing extends StatelessWidget {
+  final String photoUrl, name;
+  final bool hasUnread;
+  const _LiveStatusRing({required this.photoUrl, required this.name, required this.hasUnread});
+
+  static const _palette = [
+    Color(0xFF1565C0), Color(0xFF2E7D32), Color(0xFF6A1B9A),
+    Color(0xFFAD1457), Color(0xFFE65100), Color(0xFF00695C),
+  ];
+
+  Color get _color => name.isEmpty ? _palette[0] : _palette[name.codeUnitAt(0) % _palette.length];
+
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(2.5),
     decoration: BoxDecoration(
-      gradient: muted ? null : const LinearGradient(colors: [Color(0xFF2563EB), Color(0xFF4F8AFF)]),
-      color: muted ? Colors.white.withAlpha(60) : null,
+      gradient: hasUnread ? const LinearGradient(colors: [Color(0xFF2563EB), Color(0xFF4F8AFF)]) : null,
+      color: hasUnread ? null : Colors.white.withAlpha(60),
       shape: BoxShape.circle,
     ),
-    child: CircleAvatar(radius: 26, backgroundColor: item.color,
-      child: Text(item.name[0], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18))),
+    child: CircleAvatar(
+      radius: 26,
+      backgroundColor: _color,
+      backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
+      child: photoUrl.isEmpty
+          ? Text(name.isEmpty ? '?' : name[0].toUpperCase(),
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18))
+          : null,
+    ),
   );
 }
 
-class _StatusItem {
-  final String name, time;
-  final int count;
-  final Color color;
-  const _StatusItem({required this.name, required this.time, required this.count, required this.color});
-}
-
-class _StatusViewer extends StatefulWidget {
-  final _StatusItem item;
-  const _StatusViewer({required this.item});
-  @override
-  State<_StatusViewer> createState() => _StatusViewerState();
-}
-
-class _StatusViewerState extends State<_StatusViewer> with SingleTickerProviderStateMixin {
-  late AnimationController _prog;
-  final _reply = TextEditingController();
-  int _cur = 0;
-  final _texts = ['Studying hard for finals! 📚', 'Library life 🏛️', 'Coffee + notes = success ☕'];
-
-  @override
-  void initState() {
-    super.initState();
-    _prog = AnimationController(vsync: this, duration: const Duration(seconds: 5))
-      ..addStatusListener((s) {
-        if (s == AnimationStatus.completed) {
-          if (_cur < widget.item.count - 1) { setState(() => _cur++); _prog.forward(from: 0); }
-          else Navigator.of(context).pop();
-        }
-      })..forward();
-  }
-
-  @override
-  void dispose() { _prog.dispose(); _reply.dispose(); super.dispose(); }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: GestureDetector(
-        onTapDown: (d) {
-          final half = MediaQuery.of(context).size.width / 2;
-          if (d.globalPosition.dx < half) { if (_cur > 0) { setState(() => _cur--); _prog.forward(from: 0); } }
-          else { if (_cur < widget.item.count - 1) { setState(() => _cur++); _prog.forward(from: 0); } else Navigator.of(context).pop(); }
-        },
-        child: Stack(children: [
-          Container(width: double.infinity, height: double.infinity, color: widget.item.color.withAlpha(216),
-            child: Center(child: Text(_texts[_cur % _texts.length],
-              style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w600), textAlign: TextAlign.center)
-                .animate().fadeIn(duration: 300.ms))),
-          SafeArea(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Padding(padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-              child: Row(children: List.generate(widget.item.count, (i) => Expanded(
-                child: Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: ClipRRect(borderRadius: BorderRadius.circular(2),
-                    child: i < _cur ? Container(height: 3, color: Colors.white)
-                      : i == _cur ? AnimatedBuilder(animation: _prog,
-                          builder: (ctx2, s) => LinearProgressIndicator(value: _prog.value,
-                            backgroundColor: Colors.white38, valueColor: const AlwaysStoppedAnimation(Colors.white), minHeight: 3))
-                      : Container(height: 3, color: Colors.white38))))))),
-            Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-              child: Row(children: [
-                CircleAvatar(radius: 18, backgroundColor: widget.item.color,
-                  child: Text(widget.item.name[0], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))),
-                const SizedBox(width: 10),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(widget.item.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
-                  Text(widget.item.time, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                ])),
-                IconButton(icon: const Icon(Icons.close_rounded, color: Colors.white), onPressed: () => Navigator.of(context).pop()),
-              ])),
-          ])),
-          Positioned(bottom: 0, left: 0, right: 0,
-            child: SafeArea(top: false, child: Padding(padding: const EdgeInsets.all(12),
-              child: Row(children: [
-                Expanded(child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  decoration: BoxDecoration(border: Border.all(color: Colors.white54), borderRadius: BorderRadius.circular(24)),
-                  child: TextField(controller: _reply, style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(hintText: 'Reply…', hintStyle: TextStyle(color: Colors.white54),
-                      border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.zero, filled: false)))),
-                const SizedBox(width: 8),
-                Container(padding: const EdgeInsets.all(10),
-                  decoration: const BoxDecoration(color: Color(0xFF2563EB), shape: BoxShape.circle),
-                  child: const Icon(Icons.send_rounded, color: Colors.white, size: 20)),
-              ])))),
-        ]),
-      ),
-    );
-  }
-}
 
 // ══════════════════════════════════════════════════════════════════════
 // CALLS TAB
