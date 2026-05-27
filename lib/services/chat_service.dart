@@ -182,6 +182,31 @@ class ChatService {
   static Future<void> markRead(String chatId) async {
     await _db.collection('chats').doc(chatId)
         .update({'unreadCount.$_myUid': 0});
+
+    // Check if this user has read receipts enabled
+    try {
+      final myDoc = await _db.collection('users').doc(_myUid).get();
+      final readReceipts = (myDoc.data()?['readReceipts'] as bool?) ?? true;
+      if (!readReceipts) return;
+    } catch (_) {}
+
+    // Add myUid to readBy on recent unread messages
+    try {
+      final snap = await _db
+          .collection('chats').doc(chatId)
+          .collection('messages')
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .get();
+      final batch = _db.batch();
+      for (final doc in snap.docs) {
+        final readBy = List<String>.from(doc.data()['readBy'] as List? ?? []);
+        if (!readBy.contains(_myUid)) {
+          batch.update(doc.reference, {'readBy': FieldValue.arrayUnion([_myUid])});
+        }
+      }
+      await batch.commit();
+    } catch (_) {}
   }
 
   static Future<void> markUnread(String chatId) async {

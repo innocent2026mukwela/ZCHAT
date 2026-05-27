@@ -2262,7 +2262,6 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
     final snap = await FirebaseFirestore.instance
         .collection('chats').doc(widget.chatId).collection('messages')
         .where('type', isEqualTo: 'image')
-        .orderBy('createdAt', descending: true)
         .limit(12)
         .get();
     if (mounted) {

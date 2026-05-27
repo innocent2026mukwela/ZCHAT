@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:video_player/video_player.dart';
+import '../../services/chat_service.dart';
 import '../../services/status_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
@@ -892,15 +893,23 @@ class _StatusViewerState extends State<_StatusViewer>
     }
   }
 
-  void _sendReply(BuildContext ctx) {
+  Future<void> _sendReply(BuildContext ctx) async {
     final text = _reply.text.trim();
     if (text.isEmpty) return;
     final ownerUid  = widget.statusData['uid']  as String? ?? '';
     final ownerName = widget.statusData['name'] as String? ?? 'User';
     _reply.clear();
     FocusScope.of(ctx).unfocus();
-    Navigator.of(ctx).pop();
-    ctx.push('/chats/${Uri.encodeComponent(ownerUid)}?name=${Uri.encodeComponent(ownerName)}');
+    _progress.forward();
+    final nav    = Navigator.of(ctx);
+    final router = GoRouter.of(ctx);
+    try {
+      final chatId = await ChatService.getOrCreateChat(ownerUid);
+      await ChatService.sendMessage(chatId, text);
+      if (!mounted) return;
+      nav.pop();
+      router.push('/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(ownerName)}');
+    } catch (_) {}
   }
 
   void _showSeenBy() {

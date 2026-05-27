@@ -41,6 +41,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _privacyLastSeen = 'My contacts';
   String _privacyPhoto    = 'My contacts';
   String _privacyGroups   = 'My contacts';
+  String _statusPrivacy   = 'My contacts';
+  bool   _readReceipts    = true;
 
   // Notification toggles
   bool _notifMessages  = true;
@@ -87,6 +89,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _privacyLastSeen  = data['privacyLastSeen'] as String? ?? 'My contacts';
         _privacyPhoto     = data['privacyPhoto']    as String? ?? 'My contacts';
         _privacyGroups    = data['privacyGroups']   as String? ?? 'My contacts';
+        _statusPrivacy    = data['statusPrivacy']   as String? ?? 'My contacts';
+        _readReceipts     = data['readReceipts']    as bool?   ?? true;
         _notifMessages    = data['notifMessages']   as bool?   ?? true;
         _notifCalls       = data['notifCalls']      as bool?   ?? true;
         _notifReminders   = data['notifReminders']  as bool?   ?? true;
@@ -394,6 +398,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             icon: Icons.group_outlined, label: 'Groups',
                             value: _privacyGroups,
                             onTap: () => _pickPrivacy('privacyGroups', _privacyGroups, 'Who can add you to groups'),
+                          ),
+                          _Div(),
+                          _Row(
+                            icon: Icons.circle_outlined, label: 'Status',
+                            value: _statusPrivacy,
+                            onTap: () => _pickPrivacy('statusPrivacy', _statusPrivacy, 'Who can see my status'),
+                          ),
+                          _Div(),
+                          _ToggleRow(
+                            icon: Icons.done_all_rounded,
+                            label: 'Read receipts',
+                            value: _readReceipts,
+                            onChanged: (v) async {
+                              setState(() => _readReceipts = v);
+                              await _save({'readReceipts': v});
+                            },
                           ),
                         ]).animate(delay: 100.ms).fadeIn(),
                         const SizedBox(height: 12),

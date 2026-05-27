@@ -106,6 +106,10 @@ class StatusService {
       final userDoc = await _db.collection('users').doc(uid).get();
       final userData = userDoc.data() ?? {};
 
+      // Respect the user's status privacy setting
+      final statusPrivacy = userData['statusPrivacy'] as String? ?? 'My contacts';
+      if (statusPrivacy == 'Nobody') continue;
+
       result.add({
         'uid':       uid,
         'name':      userData['fullName'] ?? userData['displayName'] ?? userData['name'] ?? 'Unknown',
