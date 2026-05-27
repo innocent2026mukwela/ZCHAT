@@ -214,6 +214,17 @@ class _StatusScreenState extends State<StatusScreen> {
   List<Map<String, dynamic>> get _mutedStatuses =>
       _contactStatuses.where((s) => _mutedUids.contains(s['uid'] as String? ?? '')).toList();
 
+  static String _latestImageFromItems(List items) {
+    for (final item in items.reversed) {
+      final m    = item as Map;
+      final type = m['type'] as String? ?? '';
+      if (type == 'image' || type == 'video') {
+        return m['imageUrl'] as String? ?? '';
+      }
+    }
+    return '';
+  }
+
   @override
   Widget build(BuildContext context) {
     final myName     = _myProfile?['fullName'] as String?
@@ -267,15 +278,16 @@ class _StatusScreenState extends State<StatusScreen> {
                         _SectionLabel('Recent updates'),
                         ..._visibleStatuses.asMap().entries.map((e) =>
                           _ContactStatusTile(
-                            index:     e.key,
-                            name:      e.value['name'] as String? ?? 'User',
-                            photoUrl:  e.value['photoUrl'] as String? ?? '',
-                            time:      StatusService.timeAgo(e.value['latestAt'] as Timestamp?),
-                            count:     (e.value['items'] as List).length,
-                            hasUnread: e.value['hasUnread'] as bool,
-                            isMuted:   false,
-                            onTap:     () => _openViewer(e.value),
-                            onLongPress: () => _showContactOptions(e.value),
+                            index:          e.key,
+                            name:           e.value['name'] as String? ?? 'User',
+                            photoUrl:       e.value['photoUrl'] as String? ?? '',
+                            time:           StatusService.timeAgo(e.value['latestAt'] as Timestamp?),
+                            count:          (e.value['items'] as List).length,
+                            hasUnread:      e.value['hasUnread'] as bool,
+                            isMuted:        false,
+                            latestImageUrl: _latestImageFromItems(e.value['items'] as List),
+                            onTap:          () => _openViewer(e.value),
+                            onLongPress:    () => _showContactOptions(e.value),
                           ),
                         ),
                       ],
@@ -283,15 +295,16 @@ class _StatusScreenState extends State<StatusScreen> {
                         _SectionLabel('Muted updates'),
                         ..._mutedStatuses.asMap().entries.map((e) =>
                           _ContactStatusTile(
-                            index:     e.key,
-                            name:      e.value['name'] as String? ?? 'User',
-                            photoUrl:  e.value['photoUrl'] as String? ?? '',
-                            time:      StatusService.timeAgo(e.value['latestAt'] as Timestamp?),
-                            count:     (e.value['items'] as List).length,
-                            hasUnread: false,
-                            isMuted:   true,
-                            onTap:     () => _openViewer(e.value),
-                            onLongPress: () => _showContactOptions(e.value),
+                            index:          e.key,
+                            name:           e.value['name'] as String? ?? 'User',
+                            photoUrl:       e.value['photoUrl'] as String? ?? '',
+                            time:           StatusService.timeAgo(e.value['latestAt'] as Timestamp?),
+                            count:          (e.value['items'] as List).length,
+                            hasUnread:      false,
+                            isMuted:        true,
+                            latestImageUrl: _latestImageFromItems(e.value['items'] as List),
+                            onTap:          () => _openViewer(e.value),
+                            onLongPress:    () => _showContactOptions(e.value),
                           ),
                         ),
                       ],
@@ -454,9 +467,22 @@ class _MyStatusCard extends StatelessWidget {
     required this.color, required this.items, required this.onView, required this.onAdd,
   });
 
+  String get _latestImageUrl {
+    for (final item in items.reversed) {
+      final type = item['type'] as String? ?? '';
+      if (type == 'image' || type == 'video') {
+        return item['imageUrl'] as String? ?? '';
+      }
+    }
+    return '';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final hasStatus = items.isNotEmpty;
+    final hasStatus    = items.isNotEmpty;
+    final thumbnailUrl = _latestImageUrl;
+    final hasThumbnail = thumbnailUrl.isNotEmpty;
+
     return GlassCard(
       borderRadius: BorderRadius.circular(0),
       bgColor: Colors.white.withAlpha(8),
@@ -517,23 +543,71 @@ class _MyStatusCard extends StatelessWidget {
             style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 12),
           ),
         ])),
-        GestureDetector(
-          onTap: onAdd,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                  colors: [Color(0xFF2563EB), Color(0xFF7C3AED)]),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.add_rounded, color: Colors.white, size: 16),
-              SizedBox(width: 4),
-              Text('Add', style: TextStyle(color: Colors.white, fontSize: 13,
-                  fontWeight: FontWeight.w700)),
+        if (hasThumbnail)
+          GestureDetector(
+            onTap: onView,
+            child: Stack(children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: CachedNetworkImage(
+                  imageUrl: thumbnailUrl,
+                  width: 52, height: 52,
+                  fit: BoxFit.cover,
+                  placeholder: (ctx2, url2) => Container(
+                    width: 52, height: 52,
+                    color: Colors.white.withAlpha(15),
+                  ),
+                  errorWidget: (ctx2, url2, err) => Container(
+                    width: 52, height: 52,
+                    color: Colors.white.withAlpha(15),
+                    child: Icon(Icons.broken_image_outlined,
+                        color: Colors.white.withAlpha(80), size: 20),
+                  ),
+                ),
+              ),
+              if (items.firstWhere(
+                    (i) => i['type'] == 'video', orElse: () => {}).isNotEmpty)
+                Positioned.fill(
+                  child: Center(
+                    child: Icon(Icons.play_circle_fill_rounded,
+                        color: Colors.white.withAlpha(200), size: 22),
+                  ),
+                ),
+              Positioned(
+                top: 4, right: 4,
+                child: GestureDetector(
+                  onTap: onAdd,
+                  child: Container(
+                    width: 18, height: 18,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2563EB),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.black26, width: 1.5),
+                    ),
+                    child: const Icon(Icons.add, color: Colors.white, size: 11),
+                  ),
+                ),
+              ),
             ]),
+          )
+        else
+          GestureDetector(
+            onTap: onAdd,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                    colors: [Color(0xFF2563EB), Color(0xFF7C3AED)]),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.add_rounded, color: Colors.white, size: 16),
+                SizedBox(width: 4),
+                Text('Add', style: TextStyle(color: Colors.white, fontSize: 13,
+                    fontWeight: FontWeight.w700)),
+              ]),
+            ),
           ),
-        ),
       ]),
     );
   }
@@ -543,7 +617,7 @@ class _MyStatusCard extends StatelessWidget {
 
 class _ContactStatusTile extends StatelessWidget {
   final int    index, count;
-  final String name, photoUrl, time;
+  final String name, photoUrl, time, latestImageUrl;
   final bool   hasUnread, isMuted;
   final VoidCallback onTap, onLongPress;
 
@@ -551,6 +625,7 @@ class _ContactStatusTile extends StatelessWidget {
     required this.index, required this.count, required this.name,
     required this.photoUrl, required this.time, required this.hasUnread,
     required this.isMuted, required this.onTap, required this.onLongPress,
+    this.latestImageUrl = '',
   });
 
   @override
@@ -608,7 +683,48 @@ class _ContactStatusTile extends StatelessWidget {
             const SizedBox(height: 3),
             Text(time, style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 12)),
           ])),
-          if (hasUnread && !isMuted)
+          if (latestImageUrl.isNotEmpty)
+            Stack(clipBehavior: Clip.none, children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: CachedNetworkImage(
+                  imageUrl: latestImageUrl,
+                  width: 48, height: 48,
+                  fit: BoxFit.cover,
+                  placeholder: (ctx2, url2) => Container(
+                    width: 48, height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withAlpha(15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  errorWidget: (ctx2, url2, err) => Container(
+                    width: 48, height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withAlpha(15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.broken_image_outlined,
+                        color: Colors.white.withAlpha(60), size: 18),
+                  ),
+                ),
+              ),
+              if (hasUnread && !isMuted)
+                Positioned(
+                  top: -4, right: -4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4F8AFF),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF0E1829), width: 1.5),
+                    ),
+                    child: Text('$count', style: const TextStyle(
+                        color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+            ])
+          else if (hasUnread && !isMuted)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
