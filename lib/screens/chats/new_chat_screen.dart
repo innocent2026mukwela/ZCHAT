@@ -2,11 +2,12 @@ import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:go_router/go_router.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../services/chat_service.dart';
 import '../../utils/glass.dart';
 
@@ -22,18 +23,17 @@ class _NewChatScreenState extends State<NewChatScreen> {
     Color(0xFFAD1457), Color(0xFFE65100), Color(0xFF00695C),
   ];
 
-  List<Map<String, dynamic>> _zchatContacts = [];
-  List<Map<String, dynamic>> _filtered = [];
+  List<_ContactEntry> _all      = [];
+  List<_ContactEntry> _filtered = [];
 
-  bool _loading = true;
-  String _error = '';
-  String _search = '';
+  // e164 → ZCHAT user data (uid, about, photoUrl, role)
+  Map<String, _ZchatUser> _zchatMap = {};
 
-  // Add-by-phone
-  final _phoneCtrl = TextEditingController();
-  bool _phoneSearching = false;
-  Map<String, dynamic>? _phoneResult;
-  String? _phoneError;
+  bool _loading         = true;
+  bool _zchatChecking   = false;
+  String _error         = '';
+  String _search        = '';
+  final Set<String> _checking = {};
 
   @override
   void initState() {
@@ -41,175 +41,195 @@ class _NewChatScreenState extends State<NewChatScreen> {
     _loadContacts();
   }
 
-  @override
-  void dispose() {
-    _phoneCtrl.dispose();
-    super.dispose();
-  }
-
-  // ── Load & match contacts ─────────────────────────────────────────────────
+  // ── Load ALL phone contacts ───────────────────────────────────────────────
 
   Future<void> _loadContacts() async {
     setState(() { _loading = true; _error = ''; });
 
     final status = await Permission.contacts.request();
     if (!status.isGranted) {
-      if (mounted) setState(() { _loading = false; _error = 'Contacts permission denied.\nGo to Settings → Apps → ZCHAT → Permissions to enable it.'; });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Contacts permission denied.\nGo to Settings → Apps → ZCHAT → Permissions.';
+        });
+      }
       return;
     }
 
-    final contacts = await FlutterContacts.getContacts(withProperties: true);
-
-    // Map E.164 → contact display name (same format Firebase Auth stores)
-    final Map<String, String> e164ToName = {};
+    final contacts = await FlutterContacts.getContacts(withProperties: true, withPhoto: false);
+    final List<_ContactEntry> entries = [];
     for (final c in contacts) {
       for (final p in c.phones) {
         final e164 = _toE164(p.number);
-        if (e164.isNotEmpty) e164ToName[e164] = c.displayName;
+        if (e164.isNotEmpty) {
+          entries.add(_ContactEntry(
+            displayName: c.displayName.isNotEmpty ? c.displayName : e164,
+            e164: e164,
+            raw: p.number,
+          ));
+          break;
+        }
       }
     }
-
-    if (e164ToName.isEmpty) {
-      if (mounted) setState(() { _loading = false; _zchatContacts = []; _filtered = []; });
-      return;
-    }
-
-    final myUid = FirebaseAuth.instance.currentUser?.uid;
-    final phones = e164ToName.keys.toList();
-    final List<Map<String, dynamic>> matched = [];
-
-    for (int i = 0; i < phones.length; i += 30) {
-      final chunk = phones.sublist(i, i + 30 > phones.length ? phones.length : i + 30);
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('phoneNumber', whereIn: chunk)
-          .get();
-      for (final doc in snap.docs) {
-        if (doc.id == myUid) continue;
-        final data = Map<String, dynamic>.from(doc.data());
-        data['uid'] = doc.id;
-        final docPhone = data['phoneNumber'] as String? ?? '';
-        data['contactName'] = e164ToName[docPhone] ?? data['fullName'] ?? data['displayName'] ?? 'Unknown';
-        matched.add(data);
-      }
-    }
-
-    matched.sort((a, b) => (a['contactName'] as String).compareTo(b['contactName'] as String));
+    entries.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
 
     if (mounted) {
       setState(() {
-        _zchatContacts = matched;
-        _filtered = matched;
-        _loading = false;
+        _all      = entries;
+        _filtered = entries;
+        _loading  = false;
       });
     }
+
+    // Batch-check which contacts are on ZCHAT (in background)
+    _batchCheckZchat(entries.map((e) => e.e164).toList());
+  }
+
+  Future<void> _batchCheckZchat(List<String> phones) async {
+    if (phones.isEmpty) return;
+    setState(() => _zchatChecking = true);
+
+    final myUid = FirebaseAuth.instance.currentUser?.uid;
+    final Map<String, _ZchatUser> result = {};
+
+    for (int i = 0; i < phones.length; i += 30) {
+      final chunk = phones.sublist(i, (i + 30).clamp(0, phones.length));
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('phoneNumber', whereIn: chunk)
+            .get();
+        for (final doc in snap.docs) {
+          if (doc.id == myUid) continue;
+          final data = doc.data();
+          final phone = data['phoneNumber'] as String? ?? '';
+          result[phone] = _ZchatUser(
+            uid:      doc.id,
+            about:    data['about']    as String? ?? '',
+            photoUrl: data['photoUrl'] as String? ?? '',
+            role:     data['role']     as String? ?? 'student',
+          );
+        }
+      } catch (_) {}
+    }
+
+    if (mounted) setState(() { _zchatMap = result; _zchatChecking = false; });
   }
 
   void _onSearch(String q) {
     setState(() {
-      _search = q;
+      _search   = q;
       _filtered = q.trim().isEmpty
-          ? _zchatContacts
-          : _zchatContacts.where((u) {
-              final name  = (u['contactName'] as String).toLowerCase();
-              final phone = (u['phoneNumber'] as String? ?? '').toLowerCase();
-              return name.contains(q.toLowerCase()) || phone.contains(q.toLowerCase());
-            }).toList();
+          ? _all
+          : _all.where((e) =>
+              e.displayName.toLowerCase().contains(q.toLowerCase()) ||
+              e.e164.contains(q) || e.raw.contains(q)).toList();
     });
   }
 
-  Future<void> _openChat(Map<String, dynamic> user) async {
-    final uid  = user['uid'] as String;
-    final name = (user['contactName'] ?? user['displayName'] ?? 'Unknown') as String;
-    final chatId = await ChatService.getOrCreateChat(uid);
-    if (!mounted) return;
-    context.pushReplacement('/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(name)}');
-  }
+  // ── Tap → ZCHAT check → chat or invite ───────────────────────────────────
 
-  // ── Find by phone number ──────────────────────────────────────────────────
-
-  Future<void> _searchByPhone() async {
-    final raw = _phoneCtrl.text.trim();
-    if (raw.isEmpty) return;
-    final e164 = _toE164(raw);
-    if (e164.isEmpty) {
-      setState(() { _phoneError = 'Enter a valid phone number'; _phoneResult = null; });
+  Future<void> _onContactTap(_ContactEntry entry) async {
+    // If we already know from batch check
+    final known = _zchatMap[entry.e164];
+    if (known != null) {
+      await _openChat(known.uid, entry.displayName);
       return;
     }
-    setState(() { _phoneSearching = true; _phoneError = null; _phoneResult = null; });
+
+    if (_checking.contains(entry.e164)) return;
+    setState(() => _checking.add(entry.e164));
     try {
       final myUid = FirebaseAuth.instance.currentUser?.uid;
-      // Query E.164 format — that's what Firebase Auth stores
-      final candidates = [e164];
-      Map<String, dynamic>? found;
-      for (final candidate in candidates) {
-        final snap = await FirebaseFirestore.instance
-            .collection('users')
-            .where('phoneNumber', isEqualTo: candidate)
-            .limit(1)
-            .get();
-        if (snap.docs.isNotEmpty) {
-          final doc = snap.docs.first;
-          if (doc.id == myUid) { found = null; break; }
-          final data = Map<String, dynamic>.from(doc.data());
-          data['uid'] = doc.id;
-          data['contactName'] = data['fullName'] ?? data['displayName'] ?? 'ZCHAT User';
-          found = data;
-          break;
-        }
+      final snap  = await FirebaseFirestore.instance
+          .collection('users')
+          .where('phoneNumber', isEqualTo: entry.e164)
+          .limit(1)
+          .get();
+      if (!mounted) return;
+      if (snap.docs.isNotEmpty && snap.docs.first.id != myUid) {
+        final doc  = snap.docs.first;
+        final name = doc.data()['fullName'] as String?
+                  ?? doc.data()['displayName'] as String?
+                  ?? entry.displayName;
+        await _openChat(doc.id, name);
+      } else {
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => _InviteScreen(contact: entry),
+        ));
       }
+    } catch (_) {
       if (mounted) {
-        setState(() {
-          _phoneResult = found;
-          _phoneError = found == null ? 'No ZCHAT user found with that number' : null;
-        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not check contact. Try again.'),
+              behavior: SnackBarBehavior.floating),
+        );
       }
-    } catch (e) {
-      if (mounted) setState(() => _phoneError = 'Search failed. Try again.');
     } finally {
-      if (mounted) setState(() => _phoneSearching = false);
+      if (mounted) setState(() => _checking.remove(entry.e164));
     }
   }
 
-  Future<void> _saveToContacts(Map<String, dynamic> user) async {
-    final status = await Permission.contacts.request();
-    if (!status.isGranted) {
-      if (mounted) _showSnack('Contacts permission denied');
-      return;
-    }
-    final name  = (user['contactName'] ?? user['displayName'] ?? 'ZCHAT User') as String;
-    final phone = user['phone'] as String? ?? '';
-    try {
-      final contact = Contact()
-        ..name.first = name.contains(' ') ? name.split(' ').first : name
-        ..name.last  = name.contains(' ') ? name.split(' ').skip(1).join(' ') : ''
-        ..phones     = [Phone(phone)];
-      await contact.insert();
-      if (mounted) _showSnack('$name saved to contacts');
-      // Reload so they appear in the contacts list
-      _loadContacts();
-    } catch (e) {
-      if (mounted) _showSnack('Could not save contact');
-    }
-  }
-
-  void _showSnack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating, duration: const Duration(seconds: 2)),
+  Future<void> _openChat(String uid, String name) async {
+    final chatId = await ChatService.getOrCreateChat(uid);
+    if (!mounted) return;
+    context.pushReplacement(
+      '/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(name)}',
     );
   }
 
-  // Converts any Zambian number format to E.164: +260XXXXXXXXX
+  // ── New contact (native) ──────────────────────────────────────────────────
+
+  Future<void> _newContact() async {
+    final status = await Permission.contacts.request();
+    if (!status.isGranted) return;
+    await FlutterContacts.openExternalInsert();
+    _loadContacts();
+  }
+
+  // ── QR Scan ───────────────────────────────────────────────────────────────
+
+  void _openQrScan() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _QrScanScreen(
+        onUidFound: (uid) async {
+          Navigator.of(context).pop(); // close scanner
+          // Look up user by uid
+          try {
+            final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+            if (!mounted) return;
+            if (doc.exists) {
+              final name = doc.data()?['fullName'] as String?
+                        ?? doc.data()?['displayName'] as String?
+                        ?? 'ZCHAT User';
+              await _openChat(uid, name);
+            } else {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('User not found'),
+                      behavior: SnackBarBehavior.floating),
+                );
+              }
+            }
+          } catch (_) {}
+        },
+      ),
+    ));
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
   String _toE164(String raw) {
     final digits = raw.replaceAll(RegExp(r'\D'), '');
     if (digits.isEmpty) return '';
     if (digits.startsWith('260') && digits.length >= 12) return '+$digits';
-    if (digits.startsWith('0') && digits.length >= 10)   return '+260${digits.substring(1)}';
+    if (digits.startsWith('0')   && digits.length >= 10) return '+260${digits.substring(1)}';
     if (digits.length == 9)                              return '+260$digits';
     return '';
   }
 
-  // ── Build ────────────────────────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -222,70 +242,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
         child: Stack(children: [
           const GlowOrbs(),
           Column(children: [
-            // App bar + search
-            ClipRect(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white.withAlpha(12),
-                    border: Border(bottom: BorderSide(color: Colors.white.withAlpha(20))),
-                  ),
-                  child: SafeArea(
-                    bottom: false,
-                    child: Column(children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(4, 8, 16, 0),
-                        child: Row(children: [
-                          IconButton(
-                            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-                            onPressed: () => Navigator.of(context).pop(),
-                          ),
-                          const Expanded(child: Text('New Chat', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700))),
-                          if (!_loading)
-                            IconButton(
-                              icon: Icon(Icons.refresh_rounded, color: Colors.white.withAlpha(180)),
-                              onPressed: _loadContacts,
-                              tooltip: 'Refresh',
-                            ),
-                        ]),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(14),
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white.withAlpha(18),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: Colors.white.withAlpha(35)),
-                              ),
-                              child: TextField(
-                                onChanged: _onSearch,
-                                style: const TextStyle(color: Colors.white, fontSize: 15),
-                                decoration: InputDecoration(
-                                  hintText: 'Search contacts…',
-                                  hintStyle: TextStyle(color: Colors.white.withAlpha(100)),
-                                  prefixIcon: Icon(Icons.search_rounded, color: Colors.white.withAlpha(160)),
-                                  border: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  filled: false,
-                                  contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ]),
-                  ),
-                ),
-              ),
-            ),
-
+            _buildHeader(),
             Expanded(child: _buildBody()),
           ]),
         ]),
@@ -293,271 +250,503 @@ class _NewChatScreenState extends State<NewChatScreen> {
     );
   }
 
-  Widget _buildBody() {
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 32),
-      children: [
-        // ── Add by phone number card ────────────────────────────────────────
-        _AddByPhoneCard(
-          controller: _phoneCtrl,
-          searching: _phoneSearching,
-          result: _phoneResult,
-          error: _phoneError,
-          onSearch: _searchByPhone,
-          onChat: _openChat,
-          onSave: _saveToContacts,
-          colors: _colors,
-        ),
-
-        // ── Divider ─────────────────────────────────────────────────────────
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-          child: Row(children: [
-            Expanded(child: Divider(color: Colors.white.withAlpha(30))),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text('YOUR CONTACTS ON ZCHAT',
-                style: TextStyle(color: Colors.white.withAlpha(80), fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.6)),
-            ),
-            Expanded(child: Divider(color: Colors.white.withAlpha(30))),
-          ]),
-        ),
-
-        // ── Contacts list ────────────────────────────────────────────────────
-        if (_loading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 40),
-            child: Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF), strokeWidth: 2)),
-          )
-        else if (_error.isNotEmpty)
-          _ErrorView(error: _error, onRetry: _loadContacts)
-        else if (_zchatContacts.isEmpty)
-          _EmptyView()
-        else if (_filtered.isEmpty && _search.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 40),
-            child: Center(child: Text('No contacts match "$_search"',
-              style: TextStyle(color: Colors.white.withAlpha(100), fontSize: 14))),
-          )
-        else
-          ..._filtered.asMap().entries.map((e) {
-            final i = e.key;
-            final u = e.value;
-            final name  = u['contactName'] as String;
-            final phone = u['phoneNumber'] as String? ?? '';
-            final role  = u['role']        as String? ?? 'student';
-            final color = _colors[name.codeUnitAt(0) % _colors.length];
-            final photoUrl = u['photoUrl'] as String? ?? '';
-
-            return InkWell(
-              onTap: () => _openChat(u),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white.withAlpha(10)))),
+  Widget _buildHeader() {
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withAlpha(12),
+            border: Border(bottom: BorderSide(color: Colors.white.withAlpha(20))),
+          ),
+          child: SafeArea(
+            bottom: false,
+            child: Column(children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 8, 8, 0),
                 child: Row(children: [
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundColor: color,
-                    backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
-                    child: photoUrl.isEmpty
-                        ? Text(name[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16))
-                        : null,
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(name,  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15)),
-                    Text(phone, style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 13)),
-                  ])),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: role == 'lecturer'
-                          ? const Color(0xFF7C3AED).withAlpha(40)
-                          : const Color(0xFF2563EB).withAlpha(40),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: role == 'lecturer'
-                          ? const Color(0xFF7C3AED).withAlpha(80)
-                          : const Color(0xFF2563EB).withAlpha(80)),
+                  const Expanded(child: Text('New Chat',
+                    style: TextStyle(color: Colors.white, fontSize: 18,
+                        fontWeight: FontWeight.w700))),
+                  if (_zchatChecking)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white.withAlpha(150))),
                     ),
-                    child: Text(
-                      role == 'lecturer' ? 'Lecturer' : 'Student',
-                      style: TextStyle(
-                        fontSize: 11, fontWeight: FontWeight.w600,
-                        color: role == 'lecturer' ? const Color(0xFFB794F4) : const Color(0xFF93C5FD),
-                      ),
-                    ),
+                  IconButton(
+                    icon: Icon(Icons.qr_code_scanner_rounded,
+                        color: Colors.white.withAlpha(200)),
+                    onPressed: _openQrScan,
+                    tooltip: 'Scan QR code',
                   ),
+                  if (!_loading)
+                    IconButton(
+                      icon: Icon(Icons.refresh_rounded,
+                          color: Colors.white.withAlpha(180)),
+                      onPressed: _loadContacts,
+                    ),
                 ]),
               ),
-            ).animate(delay: (i * 20).ms).fadeIn();
-          }),
-      ],
-    );
-  }
-}
-
-// ── Add-by-phone card ─────────────────────────────────────────────────────────
-
-class _AddByPhoneCard extends StatelessWidget {
-  final TextEditingController controller;
-  final bool searching;
-  final Map<String, dynamic>? result;
-  final String? error;
-  final VoidCallback onSearch;
-  final Future<void> Function(Map<String, dynamic>) onChat;
-  final Future<void> Function(Map<String, dynamic>) onSave;
-  final List<Color> colors;
-
-  const _AddByPhoneCard({
-    required this.controller, required this.searching, required this.result,
-    required this.error, required this.onSearch, required this.onChat,
-    required this.onSave, required this.colors,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white.withAlpha(14),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withAlpha(30)),
-            ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Icon(Icons.person_add_rounded, color: Colors.white.withAlpha(180), size: 18),
-                const SizedBox(width: 8),
-                const Text('Add new contact', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-              ]),
-              const SizedBox(height: 12),
-              Row(children: [
-                Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withAlpha(18),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.white.withAlpha(30)),
-                    ),
-                    child: TextField(
-                      controller: controller,
-                      keyboardType: TextInputType.phone,
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d\+\s\-]'))],
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      decoration: InputDecoration(
-                        hintText: 'e.g. 0971234567',
-                        hintStyle: TextStyle(color: Colors.white.withAlpha(80), fontSize: 14),
-                        prefixIcon: Icon(Icons.phone_outlined, color: Colors.white.withAlpha(140), size: 18),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withAlpha(18),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white.withAlpha(35)),
                       ),
-                      onSubmitted: (_) => onSearch(),
+                      child: TextField(
+                        onChanged: _onSearch,
+                        style: const TextStyle(color: Colors.white, fontSize: 15),
+                        decoration: InputDecoration(
+                          hintText: 'Search name or number…',
+                          hintStyle: TextStyle(color: Colors.white.withAlpha(100)),
+                          prefixIcon: Icon(Icons.search_rounded,
+                              color: Colors.white.withAlpha(160)),
+                          border: InputBorder.none, enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none, filled: false,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                GestureDetector(
-                  onTap: searching ? null : onSearch,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2563EB).withAlpha(searching ? 40 : 80),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80)),
-                    ),
-                    child: searching
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('Find', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
-                  ),
-                ),
-              ]),
-
-              // Result
-              if (result != null) ...[
-                const SizedBox(height: 12),
-                _PhoneResultTile(user: result!, colors: colors, onChat: onChat, onSave: onSave),
-              ],
-
-              // Error
-              if (error != null) ...[
-                const SizedBox(height: 10),
-                Row(children: [
-                  Icon(Icons.info_outline_rounded, size: 14, color: Colors.redAccent.withAlpha(200)),
-                  const SizedBox(width: 6),
-                  Text(error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-                ]),
-              ],
+              ),
             ]),
           ),
         ),
       ),
     );
   }
-}
 
-class _PhoneResultTile extends StatelessWidget {
-  final Map<String, dynamic> user;
-  final List<Color> colors;
-  final Future<void> Function(Map<String, dynamic>) onChat;
-  final Future<void> Function(Map<String, dynamic>) onSave;
+  Widget _buildBody() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator(
+          color: Color(0xFF4F8AFF), strokeWidth: 2));
+    }
+    if (_error.isNotEmpty) {
+      return _ErrorView(error: _error, onRetry: _loadContacts);
+    }
 
-  const _PhoneResultTile({required this.user, required this.colors, required this.onChat, required this.onSave});
+    // Build items: [New group, New contact] + alphabet-sectioned contacts
+    final items = <_ListItem>[];
+    items.add(_ListItem.action(
+      icon: Icons.group_add_rounded, label: 'New group',
+      onTap: () => context.push('/new-group'),
+    ));
+    items.add(_ListItem.action(
+      icon: Icons.person_add_rounded, label: 'New contact',
+      onTap: _newContact,
+    ));
 
-  @override
-  Widget build(BuildContext context) {
-    final name     = (user['contactName'] ?? user['displayName'] ?? 'ZCHAT User') as String;
-    final phone    = user['phoneNumber'] as String? ?? '';
-    final role     = user['role']  as String? ?? 'student';
-    final photoUrl = user['photoUrl'] as String? ?? '';
-    final color    = colors[name.codeUnitAt(0) % colors.length];
+    String? lastLetter;
+    for (final entry in _filtered) {
+      final letter = entry.displayName[0].toUpperCase();
+      if (letter != lastLetter && RegExp(r'[A-Z]').hasMatch(letter)) {
+        items.add(_ListItem.header(letter));
+        lastLetter = letter;
+      }
+      items.add(_ListItem.contact(entry));
+    }
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2563EB).withAlpha(20),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(50)),
-      ),
-      child: Row(children: [
-        CircleAvatar(
-          radius: 22,
-          backgroundColor: color,
-          backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
-          child: photoUrl.isEmpty
-              ? Text(name[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))
-              : null,
-        ),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(name,  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
-          Text(phone, style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 12)),
-          const SizedBox(height: 2),
-          Text(role == 'lecturer' ? '🎓 Lecturer' : '📚 Student',
-            style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 11)),
-        ])),
-        // Save to contacts
-        IconButton(
-          icon: const Icon(Icons.person_add_alt_1_rounded, color: Color(0xFF4F8AFF), size: 22),
-          tooltip: 'Save to contacts',
-          onPressed: () => onSave(user),
-        ),
-        // Open chat
-        IconButton(
-          icon: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFF4F8AFF), size: 22),
-          tooltip: 'Start chat',
-          onPressed: () => onChat(user),
-        ),
-      ]),
-    ).animate().fadeIn().slideY(begin: 0.1, end: 0);
+    if (_filtered.isEmpty && _search.isNotEmpty) {
+      return Center(child: Text('No contacts match "$_search"',
+        style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 14)));
+    }
+    if (_all.isEmpty) return const _EmptyView();
+
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 32),
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final item = items[index];
+
+        if (item.type == _ItemType.header) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+            child: Text(item.letter!,
+              style: TextStyle(color: Colors.white.withAlpha(100),
+                  fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+          );
+        }
+
+        if (item.type == _ItemType.action) {
+          return InkWell(
+            onTap: item.onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(children: [
+                Container(
+                  width: 48, height: 48,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2563EB).withAlpha(50),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(60)),
+                  ),
+                  child: Icon(item.icon, color: const Color(0xFF4F8AFF), size: 22),
+                ),
+                const SizedBox(width: 14),
+                Text(item.label!,
+                  style: const TextStyle(color: Colors.white,
+                      fontWeight: FontWeight.w600, fontSize: 15)),
+              ]),
+            ),
+          ).animate(delay: (index * 30).ms).fadeIn();
+        }
+
+        // Contact tile
+        final entry       = item.entry!;
+        final zchat       = _zchatMap[entry.e164];
+        final isOnZchat   = zchat != null;
+        final color       = _colors[entry.displayName.codeUnitAt(0) % _colors.length];
+        final isChecking  = _checking.contains(entry.e164);
+        final photoUrl    = zchat?.photoUrl ?? '';
+        final about       = zchat?.about ?? '';
+        final subtitle    = isOnZchat && about.isNotEmpty ? about : entry.raw;
+
+        return InkWell(
+          onTap: isChecking ? null : () => _onContactTap(entry),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: Colors.white.withAlpha(8)))),
+            child: Row(children: [
+              // Avatar
+              Stack(children: [
+                CircleAvatar(
+                  radius: 24,
+                  backgroundColor: color,
+                  backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
+                  child: photoUrl.isEmpty
+                      ? Text(entry.displayName[0].toUpperCase(),
+                          style: const TextStyle(color: Colors.white,
+                              fontWeight: FontWeight.w700, fontSize: 16))
+                      : null,
+                ),
+                if (isOnZchat)
+                  Positioned(
+                    right: 0, bottom: 0,
+                    child: Container(
+                      width: 14, height: 14,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF22C55E),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: const Color(0xFF0A1A4A), width: 1.5),
+                      ),
+                    ),
+                  ),
+              ]),
+              const SizedBox(width: 14),
+              Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(entry.displayName,
+                    style: const TextStyle(color: Colors.white,
+                        fontWeight: FontWeight.w600, fontSize: 15)),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.white.withAlpha(130), fontSize: 13)),
+                ],
+              )),
+              if (isChecking)
+                const SizedBox(width: 20, height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Color(0xFF4F8AFF)))
+              else if (isOnZchat)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF22C55E).withAlpha(30),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFF22C55E).withAlpha(80)),
+                  ),
+                  child: const Text('ZCHAT',
+                    style: TextStyle(color: Color(0xFF22C55E),
+                        fontSize: 10, fontWeight: FontWeight.w700)),
+                ),
+            ]),
+          ),
+        ).animate(delay: (index * 10).ms).fadeIn();
+      },
+    );
   }
 }
 
-// ── Error / empty views ───────────────────────────────────────────────────────
+// ── QR Scan Screen ────────────────────────────────────────────────────────────
+
+class _QrScanScreen extends StatefulWidget {
+  final void Function(String uid) onUidFound;
+  const _QrScanScreen({required this.onUidFound});
+  @override
+  State<_QrScanScreen> createState() => _QrScanScreenState();
+}
+
+class _QrScanScreenState extends State<_QrScanScreen> {
+  bool _handled = false;
+  final MobileScannerController _ctrl = MobileScannerController();
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_handled) return;
+    for (final barcode in capture.barcodes) {
+      final raw = barcode.rawValue ?? '';
+      // Expect: zchat://user/{uid}
+      if (raw.startsWith('zchat://user/')) {
+        _handled = true;
+        final uid = raw.replaceFirst('zchat://user/', '').trim();
+        if (uid.isNotEmpty) widget.onUidFound(uid);
+        return;
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: const Text('Scan QR Code'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.flash_on_rounded),
+            onPressed: () => _ctrl.toggleTorch(),
+          ),
+        ],
+      ),
+      body: Stack(children: [
+        MobileScanner(controller: _ctrl, onDetect: _onDetect),
+        Center(
+          child: Container(
+            width: 240, height: 240,
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFF4F8AFF), width: 2),
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: 40, left: 0, right: 0,
+          child: Center(
+            child: Text('Scan a ZCHAT QR code',
+              style: TextStyle(color: Colors.white.withAlpha(200), fontSize: 15)),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Invite Screen ─────────────────────────────────────────────────────────────
+
+class _InviteScreen extends StatelessWidget {
+  final _ContactEntry contact;
+  const _InviteScreen({required this.contact});
+
+  static const _inviteText =
+      'Hey! I\'m using ZCHAT — the University of Zambia student app. '
+      'Join me: https://zchat.unza.zm/download';
+
+  Future<void> _sendSms(BuildContext context) async {
+    final uri = Uri(scheme: 'sms', path: contact.e164,
+        queryParameters: {'body': _inviteText});
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open SMS app'),
+              behavior: SnackBarBehavior.floating),
+        );
+      }
+    }
+  }
+
+  Future<void> _sendWhatsApp(BuildContext context) async {
+    final num     = contact.e164.replaceAll('+', '');
+    final encoded = Uri.encodeComponent(_inviteText);
+    final uri     = Uri.parse('https://wa.me/$num?text=$encoded');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('WhatsApp not installed'),
+              behavior: SnackBarBehavior.floating),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = const [
+      Color(0xFF1565C0), Color(0xFF2E7D32), Color(0xFF6A1B9A),
+      Color(0xFFAD1457), Color(0xFFE65100), Color(0xFF00695C),
+    ][contact.displayName.codeUnitAt(0) % 6];
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      extendBodyBehindAppBar: true,
+      body: Container(
+        decoration: const BoxDecoration(gradient: kBgGradient),
+        child: Stack(children: [
+          const GlowOrbs(),
+          SafeArea(child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 8, 16, 0),
+              child: Row(children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+                const Expanded(child: Text('Invite to ZCHAT',
+                  style: TextStyle(color: Colors.white, fontSize: 18,
+                      fontWeight: FontWeight.w700))),
+              ]),
+            ),
+            const SizedBox(height: 48),
+            CircleAvatar(
+              radius: 52, backgroundColor: color,
+              child: Text(contact.displayName[0].toUpperCase(),
+                style: const TextStyle(color: Colors.white, fontSize: 36,
+                    fontWeight: FontWeight.w700)),
+            ).animate().scale(duration: 300.ms, curve: Curves.easeOut),
+            const SizedBox(height: 20),
+            Text(contact.displayName,
+              style: const TextStyle(color: Colors.white, fontSize: 22,
+                  fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text(contact.raw,
+              style: TextStyle(color: Colors.white.withAlpha(150), fontSize: 14)),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withAlpha(30),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.orange.withAlpha(80)),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.info_outline_rounded, color: Colors.orange, size: 16),
+                SizedBox(width: 8),
+                Text('Not on ZCHAT yet',
+                  style: TextStyle(color: Colors.orange,
+                      fontWeight: FontWeight.w600, fontSize: 13)),
+              ]),
+            ).animate().fadeIn(delay: 100.ms),
+            const SizedBox(height: 40),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                'Invite ${contact.displayName.split(' ').first} to join ZCHAT.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white.withAlpha(160),
+                    fontSize: 14, height: 1.6),
+              ),
+            ),
+            const SizedBox(height: 32),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.sms_outlined),
+                  label: const Text('Send SMS Invite'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w700,
+                        fontSize: 15),
+                  ),
+                  onPressed: () => _sendSms(context),
+                ),
+              ),
+            ).animate().fadeIn(delay: 200.ms).slideY(begin: 0.2, end: 0),
+            const SizedBox(height: 14),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.chat_outlined),
+                  label: const Text('Invite via WhatsApp'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF25D366),
+                    side: const BorderSide(color: Color(0xFF25D366)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w700,
+                        fontSize: 15),
+                  ),
+                  onPressed: () => _sendWhatsApp(context),
+                ),
+              ),
+            ).animate().fadeIn(delay: 280.ms).slideY(begin: 0.2, end: 0),
+          ])),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Data models ───────────────────────────────────────────────────────────────
+
+class _ContactEntry {
+  final String displayName, e164, raw;
+  const _ContactEntry({required this.displayName, required this.e164,
+      required this.raw});
+}
+
+class _ZchatUser {
+  final String uid, about, photoUrl, role;
+  const _ZchatUser({required this.uid, required this.about,
+      required this.photoUrl, required this.role});
+}
+
+enum _ItemType { action, header, contact }
+
+class _ListItem {
+  final _ItemType type;
+  final String? letter, label;
+  final IconData? icon;
+  final VoidCallback? onTap;
+  final _ContactEntry? entry;
+
+  const _ListItem._({required this.type, this.letter, this.label,
+      this.icon, this.onTap, this.entry});
+
+  factory _ListItem.action({required IconData icon, required String label,
+      required VoidCallback onTap}) =>
+      _ListItem._(type: _ItemType.action, icon: icon, label: label, onTap: onTap);
+
+  factory _ListItem.header(String letter) =>
+      _ListItem._(type: _ItemType.header, letter: letter);
+
+  factory _ListItem.contact(_ContactEntry entry) =>
+      _ListItem._(type: _ItemType.contact, entry: entry);
+}
+
+// ── Error / Empty ─────────────────────────────────────────────────────────────
 
 class _ErrorView extends StatelessWidget {
   final String error;
@@ -565,42 +754,52 @@ class _ErrorView extends StatelessWidget {
   const _ErrorView({required this.error, required this.onRetry});
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(32),
-    child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Icon(Icons.contacts_outlined, color: Colors.white.withAlpha(60), size: 48),
-      const SizedBox(height: 16),
-      Text(error, textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 14, height: 1.5)),
-      const SizedBox(height: 20),
-      GestureDetector(
-        onTap: onRetry,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2563EB).withAlpha(60),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80)),
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.contacts_outlined, color: Colors.white.withAlpha(60), size: 48),
+        const SizedBox(height: 16),
+        Text(error, textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white.withAlpha(140),
+              fontSize: 14, height: 1.5)),
+        const SizedBox(height: 20),
+        GestureDetector(
+          onTap: onRetry,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2563EB).withAlpha(60),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80)),
+            ),
+            child: const Text('Try again',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
           ),
-          child: const Text('Try again', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
         ),
-      ),
-    ]),
+      ]),
+    ),
   );
 }
 
 class _EmptyView extends StatelessWidget {
+  const _EmptyView();
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(32),
-    child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Icon(Icons.person_search_rounded, color: Colors.white.withAlpha(60), size: 48),
-      const SizedBox(height: 16),
-      const Text('None of your contacts are on ZCHAT yet.', textAlign: TextAlign.center,
-        style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
-      const SizedBox(height: 8),
-      Text('Use "Add new contact" above to find anyone by phone number.',
-        textAlign: TextAlign.center,
-        style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 13, height: 1.5)),
-    ]),
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.contacts_outlined, color: Colors.white.withAlpha(60), size: 48),
+        const SizedBox(height: 16),
+        const Text('No contacts found',
+          style: TextStyle(color: Colors.white, fontSize: 15,
+              fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        Text('Save contacts on your device to find them here.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white.withAlpha(140),
+              fontSize: 13, height: 1.5)),
+      ]),
+    ),
   );
 }

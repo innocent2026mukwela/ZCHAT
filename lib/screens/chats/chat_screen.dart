@@ -8,9 +8,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:go_router/go_router.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../screens/calls/outgoing_call_screen.dart';
 import '../../services/ai_service.dart';
 import '../../services/chat_service.dart';
@@ -819,18 +822,30 @@ class _ChatScreenState extends State<ChatScreen>
                       style: TextStyle(color: Colors.white.withAlpha(140))),
                 )
               else
-                ...seenBy.map((uid) => ListTile(
-                  dense: true,
-                  leading: CircleAvatar(
-                    radius: 16,
-                    backgroundColor: const Color(0xFF1565C0),
-                    child: Text(uid.substring(0, 1).toUpperCase(),
-                        style: const TextStyle(color: Colors.white, fontSize: 12)),
-                  ),
-                  title: Text(uid,
-                      style: const TextStyle(color: Colors.white, fontSize: 14)),
-                  trailing: const Icon(Icons.done_all_rounded,
-                      color: Color(0xFF53BDEB), size: 16),
+                ...seenBy.map((uid) => FutureBuilder<DocumentSnapshot>(
+                  future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+                  builder: (ctx, userSnap) {
+                    final name = userSnap.data?.get('fullName') as String?
+                              ?? userSnap.data?.get('displayName') as String?
+                              ?? uid.substring(0, 6);
+                    final photo = userSnap.data?.get('photoUrl') as String? ?? '';
+                    return ListTile(
+                      dense: true,
+                      leading: CircleAvatar(
+                        radius: 16,
+                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundImage: photo.isNotEmpty ? NetworkImage(photo) : null,
+                        child: photo.isEmpty
+                            ? Text(name[0].toUpperCase(),
+                                style: const TextStyle(color: Colors.white, fontSize: 12))
+                            : null,
+                      ),
+                      title: Text(name,
+                          style: const TextStyle(color: Colors.white, fontSize: 14)),
+                      trailing: const Icon(Icons.done_all_rounded,
+                          color: Color(0xFF53BDEB), size: 16),
+                    );
+                  },
                 )),
               const SizedBox(height: 8),
             ]),
@@ -2152,9 +2167,13 @@ class _ContactInfoSheet extends StatefulWidget {
 
 class _ContactInfoSheetState extends State<_ContactInfoSheet> {
   Map<String, dynamic>? _profile;
-  bool _isBlocked = false;
-  bool _isMuted   = false;
+  bool   _isBlocked     = false;
+  bool   _isMuted       = false;
+  bool   _isChatLocked  = false;
+  bool   _mediaVisible  = true;
+  String _disappearing  = 'off';
   List<Map<String, dynamic>> _mediaItems = [];
+  final _localAuth = LocalAuthentication();
 
   @override
   void initState() {
@@ -2172,19 +2191,71 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
 
   Future<void> _loadChatMeta() async {
     final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    // Check blocked status
     if (!widget.isGroup && widget.otherUid.isNotEmpty) {
       final blockedDoc = await FirebaseFirestore.instance
           .collection('users').doc(myUid).collection('blocked').doc(widget.otherUid).get();
       if (mounted) setState(() => _isBlocked = blockedDoc.exists);
     }
-    // Check mute status
     final chatDoc = await FirebaseFirestore.instance
         .collection('chats').doc(widget.chatId).get();
     if (mounted && chatDoc.exists) {
-      final muted = Map<String, dynamic>.from(chatDoc.data()?['muted'] as Map? ?? {});
-      setState(() => _isMuted = (muted[myUid] as bool?) == true);
+      final data  = chatDoc.data()!;
+      final muted = Map<String, dynamic>.from(data['muted'] as Map? ?? {});
+      setState(() {
+        _isMuted       = (muted[myUid] as bool?) == true;
+        _disappearing  = data['disappearingMessages'] as String? ?? 'off';
+        _mediaVisible  = (data['mediaVisible'] as bool?) ?? true;
+      });
     }
+    // Load chat lock from SharedPreferences
+    final prefs  = await SharedPreferences.getInstance();
+    final locked = (prefs.getStringList('locked_chats') ?? []).toSet();
+    if (mounted) setState(() => _isChatLocked = locked.contains(widget.chatId));
+  }
+
+  Future<void> _toggleChatLock() async {
+    if (!_isChatLocked) {
+      // Require auth before locking
+      bool canCheck = false;
+      try {
+        canCheck = await _localAuth.canCheckBiometrics ||
+                   await _localAuth.isDeviceSupported();
+      } catch (_) {}
+      if (canCheck) {
+        bool authed = false;
+        try {
+          authed = await _localAuth.authenticate(
+            localizedReason: 'Confirm to lock this chat',
+            options: const AuthenticationOptions(stickyAuth: true),
+          );
+        } catch (_) {}
+        if (!authed) return;
+      }
+    }
+    final prefs  = await SharedPreferences.getInstance();
+    final locked = (prefs.getStringList('locked_chats') ?? []).toSet();
+    if (_isChatLocked) {
+      locked.remove(widget.chatId);
+    } else {
+      locked.add(widget.chatId);
+    }
+    await prefs.setStringList('locked_chats', locked.toList());
+    if (mounted) setState(() => _isChatLocked = !_isChatLocked);
+  }
+
+  Future<void> _setDisappearing(String val) async {
+    await FirebaseFirestore.instance
+        .collection('chats').doc(widget.chatId)
+        .update({'disappearingMessages': val});
+    if (mounted) setState(() => _disappearing = val);
+  }
+
+  Future<void> _toggleMediaVisible() async {
+    final next = !_mediaVisible;
+    await FirebaseFirestore.instance
+        .collection('chats').doc(widget.chatId)
+        .update({'mediaVisible': next});
+    if (mounted) setState(() => _mediaVisible = next);
   }
 
   Future<void> _loadMedia() async {
@@ -2361,7 +2432,129 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
                     ),
             ),
             Divider(color: Colors.white.withAlpha(12), height: 28),
-            // Mute / Block / Delete
+
+            // ── Encryption info ────────────────────────────────────────────
+            ListTile(
+              leading: const Icon(Icons.lock_outline_rounded, color: Colors.white70),
+              title: const Text('Encryption',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: Text(
+                'Messages are end-to-end encrypted.',
+                style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12),
+              ),
+              onTap: () => showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  backgroundColor: const Color(0xFF0E1829),
+                  title: const Text('End-to-End Encryption',
+                      style: TextStyle(color: Colors.white)),
+                  content: Text(
+                    'Messages in this chat are secured with end-to-end encryption. '
+                    'Only you and ${widget.isGroup ? 'group members' : widget.name.split(' ').first} '
+                    'can read them.',
+                    style: TextStyle(color: Colors.white.withAlpha(180), height: 1.5),
+                  ),
+                  actions: [TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('OK', style: TextStyle(color: Color(0xFF4F8AFF))),
+                  )],
+                ),
+              ),
+            ),
+
+            // ── Disappearing messages ──────────────────────────────────────
+            ListTile(
+              leading: const Icon(Icons.timer_outlined, color: Colors.white70),
+              title: const Text('Disappearing messages',
+                  style: TextStyle(color: Colors.white)),
+              trailing: Text(
+                _disappearing == 'off' ? 'Off'
+                    : _disappearing == '24h' ? '24 hours'
+                    : _disappearing == '7d'  ? '7 days'
+                    : '30 days',
+                style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 13),
+              ),
+              onTap: () => showModalBottomSheet(
+                context: context,
+                backgroundColor: const Color(0xFF0E1829),
+                shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+                builder: (_) => SafeArea(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Container(margin: const EdgeInsets.symmetric(vertical: 12),
+                        width: 40, height: 4,
+                        decoration: BoxDecoration(color: Colors.white.withAlpha(40),
+                            borderRadius: BorderRadius.circular(2))),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+                      child: Text('Disappearing Messages',
+                          style: TextStyle(color: Colors.white, fontSize: 16,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                    for (final opt in [
+                      ('off', 'Off',      Icons.timer_off_outlined),
+                      ('24h', '24 hours', Icons.timer_outlined),
+                      ('7d',  '7 days',   Icons.timer_outlined),
+                      ('30d', '30 days',  Icons.timer_outlined),
+                    ])
+                      ListTile(
+                        leading: Icon(opt.$3,
+                            color: opt.$1 == _disappearing
+                                ? const Color(0xFF4F8AFF) : Colors.white54),
+                        title: Text(opt.$2,
+                            style: TextStyle(
+                                color: opt.$1 == _disappearing
+                                    ? const Color(0xFF4F8AFF) : Colors.white)),
+                        trailing: opt.$1 == _disappearing
+                            ? const Icon(Icons.check_rounded, color: Color(0xFF4F8AFF))
+                            : null,
+                        onTap: () {
+                          Navigator.pop(context);
+                          _setDisappearing(opt.$1);
+                        },
+                      ),
+                    const SizedBox(height: 8),
+                  ]),
+                ),
+              ),
+            ),
+
+            // ── Media visibility ───────────────────────────────────────────
+            SwitchListTile(
+              secondary: const Icon(Icons.photo_library_outlined, color: Colors.white70),
+              title: const Text('Media visibility',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: Text(
+                _mediaVisible
+                    ? 'Photos saved to gallery'
+                    : 'Photos hidden from gallery',
+                style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12),
+              ),
+              value: _mediaVisible,
+              activeThumbColor: const Color(0xFF4F8AFF),
+              onChanged: (_) => _toggleMediaVisible(),
+            ),
+
+            // ── Chat lock ──────────────────────────────────────────────────
+            SwitchListTile(
+              secondary: Icon(
+                _isChatLocked ? Icons.lock_rounded : Icons.lock_open_outlined,
+                color: _isChatLocked ? const Color(0xFF7C3AED) : Colors.white70,
+              ),
+              title: const Text('Chat lock',
+                  style: TextStyle(color: Colors.white)),
+              subtitle: Text(
+                'Lock and hide this chat on this device.',
+                style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12),
+              ),
+              value: _isChatLocked,
+              activeThumbColor: const Color(0xFF7C3AED),
+              onChanged: (_) => _toggleChatLock(),
+            ),
+
+            Divider(color: Colors.white.withAlpha(12), height: 28),
+
+            // ── Mute / Create group / Block / Delete ───────────────────────
             ListTile(
               leading: Icon(
                 _isMuted ? Icons.notifications_rounded : Icons.volume_off_outlined,
@@ -2371,6 +2564,19 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
                   style: const TextStyle(color: Colors.white)),
               onTap: _toggleMute,
             ),
+
+            if (!widget.isGroup)
+              ListTile(
+                leading: const Icon(Icons.group_add_rounded, color: Colors.white70),
+                title: Text('Create group with ${widget.name.split(' ').first}',
+                    style: const TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push('/new-group',
+                      extra: {'preselectedUid': widget.otherUid});
+                },
+              ),
+
             if (!widget.isGroup)
               ListTile(
                 leading: Icon(Icons.block_rounded,

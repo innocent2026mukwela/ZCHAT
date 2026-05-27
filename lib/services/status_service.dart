@@ -53,6 +53,22 @@ class StatusService {
     });
   }
 
+  static Future<void> postVideoStatus(String videoUrl, {String? caption}) async {
+    final expires = DateTime.now().add(const Duration(hours: 24));
+    await _db
+        .collection('statuses')
+        .doc(_myUid)
+        .collection('items')
+        .add({
+      'type':      'video',
+      'text':      caption ?? '',
+      'imageUrl':  videoUrl,
+      'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(expires),
+      'viewedBy':  [],
+    });
+  }
+
   // ── My status items (non-expired) ────────────────────────────────────────
 
   static Stream<List<Map<String, dynamic>>> myStatusStream() {

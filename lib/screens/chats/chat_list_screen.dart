@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/chat_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
@@ -48,6 +50,9 @@ class _ChatListScreenState extends State<ChatListScreen>
   final  _myUid      = FirebaseAuth.instance.currentUser?.uid ?? '';
   late   TabController _tabCtrl;
 
+  Set<String> _lockedChats = {};
+  final _auth = LocalAuthentication();
+
   @override
   void initState() {
     super.initState();
@@ -57,6 +62,59 @@ class _ChatListScreenState extends State<ChatListScreen>
         setState(() => _tab = _Tab.values[_tabCtrl.index]);
       }
     });
+    _loadLockedChats();
+  }
+
+  Future<void> _loadLockedChats() async {
+    final prefs  = await SharedPreferences.getInstance();
+    final locked = prefs.getStringList('locked_chats') ?? [];
+    if (mounted) setState(() => _lockedChats = locked.toSet());
+  }
+
+  Future<void> _openChat(BuildContext context, Map<String, dynamic> chat) async {
+    final chatId = chat['id'] as String? ?? '';
+    final name   = ChatService.getChatDisplayName(chat);
+
+    if (_lockedChats.contains(chatId)) {
+      bool canCheck = false;
+      try { canCheck = await _auth.canCheckBiometrics || await _auth.isDeviceSupported(); }
+      catch (_) {}
+
+      bool authed = false;
+      if (canCheck) {
+        try {
+          authed = await _auth.authenticate(
+            localizedReason: 'Unlock "$name"',
+            options: const AuthenticationOptions(stickyAuth: true),
+          );
+        } catch (_) {}
+      } else {
+        // Fallback: just ask confirmation
+        authed = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            backgroundColor: const Color(0xFF0E1829),
+            title: const Text('Chat Locked',
+                style: TextStyle(color: Colors.white)),
+            content: Text('Unlock "$name"?',
+                style: TextStyle(color: Colors.white.withAlpha(180))),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB)),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Unlock'),
+              ),
+            ],
+          ),
+        ) ?? false;
+      }
+      if (!authed) return;
+    }
+
+    if (!context.mounted) return;
+    context.push('/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(name)}');
   }
 
   @override
@@ -153,10 +211,13 @@ class _ChatListScreenState extends State<ChatListScreen>
                       }
                       final idx = archivedCount > 0 ? i - 1 : i;
                       return _ChatTile(
-                        chat:  chats[idx],
-                        myUid: _myUid,
-                        index: idx,
+                        chat:     chats[idx],
+                        myUid:    _myUid,
+                        index:    idx,
+                        isLocked: _lockedChats.contains(
+                            chats[idx]['id'] as String? ?? ''),
                         onAction: () => setState(() {}),
+                        onTap:    () => _openChat(context, chats[idx]),
                       );
                     },
                   );
@@ -369,13 +430,17 @@ class _ChatTile extends StatelessWidget {
   final Map<String, dynamic> chat;
   final String myUid;
   final int    index;
+  final bool   isLocked;
   final VoidCallback onAction;
+  final VoidCallback onTap;
 
   const _ChatTile({
     required this.chat,
     required this.myUid,
     required this.index,
     required this.onAction,
+    required this.onTap,
+    this.isLocked = false,
   });
 
   void _showOptions(BuildContext context) {
@@ -474,6 +539,7 @@ class _ChatTile extends StatelessWidget {
     final unread    = ChatService.getUnreadCount(chat);
     final hasUnread = unread > 0;
     final isPinned  = ChatService.isPinned(chat);
+    final isMuted   = ChatService.isMuted(chat);
     final ts        = chat['lastTime'] as Timestamp?;
     final timeStr   = _formatTime(ts);
     final chatId    = chat['id'] as String? ?? '';
@@ -518,8 +584,7 @@ class _ChatTile extends StatelessWidget {
         return confirm ?? false;
       },
       child: GestureDetector(
-        onTap: () => context.push(
-            '/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(name)}'),
+        onTap: onTap,
         onLongPress: () => _showOptions(context),
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 3),
@@ -557,6 +622,20 @@ class _ChatTile extends StatelessWidget {
                         color: Colors.white, size: 9),
                   ),
                 ),
+              if (isLocked && !isPinned)
+                Positioned(
+                  right: 0, bottom: 0,
+                  child: Container(
+                    width: 16, height: 16,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF7C3AED),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: const Color(0xFF0A1A4A), width: 1.5),
+                    ),
+                    child: const Icon(Icons.lock_rounded,
+                        color: Colors.white, size: 9),
+                  ),
+                ),
             ]),
             const SizedBox(width: 12),
             // Content
@@ -588,19 +667,29 @@ class _ChatTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(timeStr, style: TextStyle(
-                  fontSize: 11,
-                  color: hasUnread
-                      ? const Color(0xFF4F8AFF)
-                      : Colors.white.withAlpha(100),
-                  fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w400,
-                )),
+                Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (isMuted)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(Icons.notifications_off_outlined,
+                          size: 13, color: Colors.white.withAlpha(100)),
+                    ),
+                  Text(timeStr, style: TextStyle(
+                    fontSize: 11,
+                    color: hasUnread
+                        ? const Color(0xFF4F8AFF)
+                        : Colors.white.withAlpha(100),
+                    fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w400,
+                  )),
+                ]),
                 const SizedBox(height: 5),
                 if (hasUnread)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF2563EB),
+                      color: isMuted
+                          ? Colors.white.withAlpha(50)
+                          : const Color(0xFF2563EB),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text('$unread', style: const TextStyle(

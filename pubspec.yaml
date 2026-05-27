@@ -72,6 +72,15 @@ dependencies:
   intl_phone_field: ^3.2.0
   http: ^1.2.2
 
+  # Biometrics / chat lock
+  local_auth: ^2.3.0
+
+  # QR code scanner
+  mobile_scanner: ^5.2.1
+
+  # Video playback (status + video messages)
+  video_player: ^2.9.2
+
   # Firebase
   firebase_core: ^3.13.0
   firebase_auth: ^5.5.0

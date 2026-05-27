@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -9,6 +11,7 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:video_player/video_player.dart';
 import '../../services/status_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
@@ -667,6 +670,25 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
     if (mounted) { Navigator.pop(context); widget.onDone(); }
   }
 
+  Future<void> _pickVideo(ImageSource source) async {
+    final picked = await ImagePicker().pickVideo(
+        source: source, maxDuration: const Duration(seconds: 30));
+    if (picked == null || !mounted) return;
+    setState(() => _posting = true);
+    try {
+      final file = File(picked.path);
+      final ref  = FirebaseStorage.instance
+          .ref('status_videos/${FirebaseAuth.instance.currentUser!.uid}'
+              '/${DateTime.now().millisecondsSinceEpoch}.mp4');
+      await ref.putFile(file);
+      final url = await ref.getDownloadURL();
+      await StatusService.postVideoStatus(url, caption: _ctrl.text.trim());
+      if (mounted) { Navigator.pop(context); widget.onDone(); }
+    } catch (_) {
+      if (mounted) setState(() => _posting = false);
+    }
+  }
+
   @override
   void dispose() { _ctrl.dispose(); super.dispose(); }
 
@@ -710,9 +732,9 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
               padding: EdgeInsets.symmetric(vertical: 8),
               child: CircularProgressIndicator(color: Color(0xFF4F8AFF)),
             )
-          else
+          else ...[
+            // Row 1: photo options
             Row(children: [
-              // Camera
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () => _pickImage(ImageSource.camera),
@@ -728,12 +750,11 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
                 ),
               ),
               const SizedBox(width: 8),
-              // Gallery
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () => _pickImage(ImageSource.gallery),
                   icon: const Icon(Icons.image_outlined, size: 18),
-                  label: const Text('Gallery'),
+                  label: const Text('Photo'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
                     side: BorderSide(color: Colors.white.withAlpha(50)),
@@ -744,7 +765,6 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
                 ),
               ),
               const SizedBox(width: 8),
-              // Post text
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: _postText,
@@ -760,6 +780,40 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
                 ),
               ),
             ]),
+            const SizedBox(height: 8),
+            // Row 2: video options
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _pickVideo(ImageSource.camera),
+                  icon: const Icon(Icons.videocam_outlined, size: 18),
+                  label: const Text('Record Video'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFFBBF24),
+                    side: BorderSide(color: const Color(0xFFFBBF24).withAlpha(80)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _pickVideo(ImageSource.gallery),
+                  icon: const Icon(Icons.video_library_outlined, size: 18),
+                  label: const Text('Video Gallery'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFFBBF24),
+                    side: BorderSide(color: const Color(0xFFFBBF24).withAlpha(80)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                ),
+              ),
+            ]),
+          ],
         ]),
       ),
     );
@@ -782,6 +836,7 @@ class _StatusViewerState extends State<_StatusViewer>
   late List<Map<String, dynamic>> _items;
   int  _cur = 0;
   final _reply = TextEditingController();
+  VideoPlayerController? _videoCtrl;
 
   @override
   void initState() {
@@ -792,15 +847,38 @@ class _StatusViewerState extends State<_StatusViewer>
         vsync: this, duration: const Duration(seconds: 5))
       ..addStatusListener((s) {
         if (s == AnimationStatus.completed) _advance();
-      })
-      ..forward();
+      });
+    _initCurrent();
     _markCurrent();
+  }
+
+  Future<void> _initCurrent() async {
+    await _videoCtrl?.dispose();
+    _videoCtrl = null;
+    final item = _items[_cur];
+    final type = item['type'] as String? ?? 'text';
+    if (type == 'video') {
+      final url = item['imageUrl'] as String? ?? '';
+      if (url.isNotEmpty) {
+        final ctrl = VideoPlayerController.networkUrl(Uri.parse(url));
+        await ctrl.initialize();
+        _videoCtrl = ctrl;
+        if (mounted) {
+          setState(() {});
+          ctrl.play();
+          _progress.duration = ctrl.value.duration;
+        }
+      }
+    } else {
+      _progress.duration = const Duration(seconds: 5);
+    }
+    _progress.forward(from: 0);
   }
 
   void _advance() {
     if (_cur < _items.length - 1) {
       setState(() => _cur++);
-      _progress.forward(from: 0);
+      _initCurrent();
       _markCurrent();
     } else {
       Navigator.of(context).pop();
@@ -862,16 +940,32 @@ class _StatusViewerState extends State<_StatusViewer>
               child: ListView.builder(
                 itemCount: viewers.length,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemBuilder: (_, i) => ListTile(
-                  leading: CircleAvatar(
-                    radius: 18,
-                    backgroundColor: _avatarColor(viewers[i]),
-                    child: Text(viewers[i].substring(0, 1).toUpperCase(),
-                        style: const TextStyle(color: Colors.white,
-                            fontWeight: FontWeight.w700, fontSize: 12)),
-                  ),
-                  title: Text(viewers[i],
-                      style: TextStyle(color: Colors.white.withAlpha(200), fontSize: 14)),
+                itemBuilder: (_, i) => FutureBuilder<DocumentSnapshot>(
+                  future: FirebaseFirestore.instance
+                      .collection('users').doc(viewers[i].toString()).get(),
+                  builder: (ctx, snap) {
+                    final name  = snap.data?.get('fullName')    as String?
+                               ?? snap.data?.get('displayName') as String?
+                               ?? 'ZCHAT User';
+                    final photo = snap.data?.get('photoUrl') as String? ?? '';
+                    final col   = _avatarColor(name);
+                    return ListTile(
+                      leading: CircleAvatar(
+                        radius: 18,
+                        backgroundColor: col,
+                        backgroundImage:
+                            photo.isNotEmpty ? NetworkImage(photo) : null,
+                        child: photo.isEmpty
+                            ? Text(name[0].toUpperCase(),
+                                style: const TextStyle(color: Colors.white,
+                                    fontWeight: FontWeight.w700, fontSize: 12))
+                            : null,
+                      ),
+                      title: Text(name,
+                          style: TextStyle(
+                              color: Colors.white.withAlpha(200), fontSize: 14)),
+                    );
+                  },
                 ),
               ),
             ),
@@ -885,6 +979,7 @@ class _StatusViewerState extends State<_StatusViewer>
   void dispose() {
     _progress.dispose();
     _reply.dispose();
+    _videoCtrl?.dispose();
     super.dispose();
   }
 
@@ -908,7 +1003,7 @@ class _StatusViewerState extends State<_StatusViewer>
           if (d.globalPosition.dx < half) {
             if (_cur > 0) {
               setState(() => _cur--);
-              _progress.forward(from: 0);
+              _initCurrent();
               _markCurrent();
             }
           } else {
@@ -918,36 +1013,45 @@ class _StatusViewerState extends State<_StatusViewer>
         child: Stack(children: [
           // Content
           SizedBox.expand(
-            child: type == 'image' && imgUrl.isNotEmpty
-                ? CachedNetworkImage(
-                    imageUrl: imgUrl,
+            child: type == 'video' && _videoCtrl != null && _videoCtrl!.value.isInitialized
+                ? FittedBox(
                     fit: BoxFit.contain,
-                    placeholder: (c, u) => const Center(
-                        child: CircularProgressIndicator(color: Colors.white)),
-                    errorWidget: (c, u, e) => const Icon(
-                        Icons.broken_image_outlined,
-                        color: Colors.white54, size: 64),
+                    child: SizedBox(
+                      width:  _videoCtrl!.value.size.width,
+                      height: _videoCtrl!.value.size.height,
+                      child: VideoPlayer(_videoCtrl!),
+                    ),
                   )
-                : Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [_avatarColor(name).withAlpha(200), Colors.black],
+                : type == 'image' && imgUrl.isNotEmpty
+                    ? CachedNetworkImage(
+                        imageUrl: imgUrl,
+                        fit: BoxFit.contain,
+                        placeholder: (c, u) => const Center(
+                            child: CircularProgressIndicator(color: Colors.white)),
+                        errorWidget: (c, u, e) => const Icon(
+                            Icons.broken_image_outlined,
+                            color: Colors.white54, size: 64),
+                      )
+                    : Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [_avatarColor(name).withAlpha(200), Colors.black],
+                          ),
+                        ),
+                        child: Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Text(text,
+                              style: const TextStyle(color: Colors.white,
+                                  fontSize: 24, fontWeight: FontWeight.w600,
+                                  height: 1.4),
+                              textAlign: TextAlign.center,
+                            ).animate().fadeIn(duration: 300.ms),
+                          ),
+                        ),
                       ),
-                    ),
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32),
-                        child: Text(text,
-                          style: const TextStyle(color: Colors.white,
-                              fontSize: 24, fontWeight: FontWeight.w600,
-                              height: 1.4),
-                          textAlign: TextAlign.center,
-                        ).animate().fadeIn(duration: 300.ms),
-                      ),
-                    ),
-                  ),
           ),
 
           // Caption over image
@@ -1062,7 +1166,7 @@ class _StatusViewerState extends State<_StatusViewer>
                         _items.removeAt(_cur);
                         if (_cur >= _items.length) _cur = _items.length - 1;
                       });
-                      _progress.forward(from: 0);
+                      _initCurrent();
                     }
                   },
                 ),
