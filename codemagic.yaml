@@ -6,20 +6,23 @@ workflows:
     max_build_duration: 60
     instance_type: mac_mini_m2
 
+    integrations:
+      app_store_connect: Codemagic
+
     environment:
       flutter: 3.41.8
       xcode: latest
       cocoapods: default
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: com.unza.unza_z_chat
       vars:
         BUNDLE_ID: com.unza.unza_z_chat
         XCODE_SCHEME: Runner
         XCODE_WORKSPACE: ios/Runner.xcworkspace
-      # Add these in Codemagic dashboard → Environment variables:
-      #   GOOGLE_SERVICE_INFO_PLIST  ← base64 encoded GoogleService-Info.plist
-      #   APP_STORE_CONNECT_ISSUER_ID (optional, for TestFlight)
       groups:
-        - firebase_ios        # contains: GOOGLE_SERVICE_INFO_PLIST
-        - apple_credentials   # contains: APP_STORE_CONNECT_APPLE_ID, APP_STORE_CONNECT_PASSWORD, APPLE_UDID
+        - firebase_ios        # GOOGLE_SERVICE_INFO_PLIST
+        - apple_credentials   # APP_STORE_CONNECT_APPLE_ID, APP_STORE_CONNECT_PASSWORD, APPLE_UDID
 
     triggering:
       events:
@@ -31,49 +34,24 @@ workflows:
     scripts:
       - name: Set up GoogleService-Info.plist
         script: |
-          echo $GOOGLE_SERVICE_INFO_PLIST | base64 --decode > ios/Runner/GoogleService-Info.plist
+          echo $GOOGLE_SERVICE_INFO_PLIST | base64 --decode > $CM_BUILD_DIR/ios/Runner/GoogleService-Info.plist
 
       - name: Get Flutter packages
         script: flutter pub get
 
       - name: Install CocoaPods
         script: |
-          cd ios
-          pod install
-          cd ..
-
-      - name: Set up iOS code signing
-        script: |
-          keychain initialize
-          # Register device UDID if provided
-          if [ -n "$APPLE_UDID" ]; then
-            app-store-connect devices register \
-              --name "Test iPhone" \
-              --platform IOS \
-              --udid "$APPLE_UDID" || true
-          fi
-          # Create certificate + provisioning profile using Apple ID
-          app-store-connect fetch-signing-files \
-            --type IOS_APP_DEVELOPMENT \
-            --bundle-id "$BUNDLE_ID" \
-            --create \
-            --platform IOS
-          keychain add-certificates
-          xcode-project use-profiles
+          cd ios && pod install && cd ..
 
       - name: Build iOS IPA
         script: |
-          flutter build ios \
+          flutter build ipa \
             --release \
-            --no-codesign
-          xcode-project build-ipa \
-            --workspace "$XCODE_WORKSPACE" \
-            --scheme "$XCODE_SCHEME"
+            --export-method development
 
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-      - flutter_drive.log
 
     publishing:
       email:
