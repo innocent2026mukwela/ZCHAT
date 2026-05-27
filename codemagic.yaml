@@ -1,28 +1,21 @@
 workflows:
 
-  # ── iOS build (sideload via AltStore) ─────────────────────────────────────
+  # ── iOS build (unsigned IPA → sideload via AltStore with free Apple ID) ─────
   ios-development:
     name: iOS Development Build
     max_build_duration: 60
     instance_type: mac_mini_m2
 
-    integrations:
-      app_store_connect: Codemagic
-
     environment:
       flutter: 3.41.8
       xcode: latest
       cocoapods: default
-      ios_signing:
-        distribution_type: development
-        bundle_identifier: com.unza.unza_z_chat
       vars:
         BUNDLE_ID: com.unza.unza_z_chat
         XCODE_SCHEME: Runner
         XCODE_WORKSPACE: ios/Runner.xcworkspace
       groups:
         - firebase_ios        # GOOGLE_SERVICE_INFO_PLIST
-        - apple_credentials   # APP_STORE_CONNECT_APPLE_ID, APP_STORE_CONNECT_PASSWORD, APPLE_UDID
 
     triggering:
       events:
@@ -43,11 +36,18 @@ workflows:
         script: |
           cd ios && pod install && cd ..
 
-      - name: Build iOS IPA
+      - name: Build iOS (no code sign)
         script: |
-          flutter build ipa \
-            --release \
-            --export-method development
+          flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        script: |
+          mkdir -p build/ios/ipa
+          cd build/ios/Release-iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r ../ipa/ZCHAT-unsigned.ipa Payload
+          cd ../../..
 
     artifacts:
       - build/ios/ipa/*.ipa
