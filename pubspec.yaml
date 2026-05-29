@@ -76,7 +76,7 @@ dependencies:
   local_auth: ^2.3.0
 
   # QR code scanner
-  mobile_scanner: ^5.2.1
+  mobile_scanner: ^6.0.0
 
   # Video playback (status + video messages)
   video_player: ^2.9.2
