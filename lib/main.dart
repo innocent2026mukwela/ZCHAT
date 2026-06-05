@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'firebase_options.dart';
 import 'services/fcm_service.dart';
 import 'services/planner_service.dart';
@@ -20,6 +21,7 @@ void main() async {
     await ZegoService.init();
   }
 
+  GoogleFonts.config.allowRuntimeFetching = false;
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const UnZAzChatApp());
 }
