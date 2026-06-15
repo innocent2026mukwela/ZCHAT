@@ -680,7 +680,8 @@ class _AiPromptCardState extends State<_AiPromptCard> {
     if (prompt.isEmpty || _loading) return;
     setState(() => _loading = true);
     try {
-      final reply = await AiService.chat(messages: [{'role': 'user', 'content': prompt}]);
+      final result = await AiService.chat(messages: [{'role': 'user', 'content': prompt}]);
+      final reply = result['reply'] as String;
       if (!mounted) return;
       _ctrl.clear();
       showDialog(

@@ -3,15 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:go_router/go_router.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/ai_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
+import '../../widgets/voice_input_button.dart';
 
 class AiChatScreen extends StatefulWidget {
-  const AiChatScreen({super.key});
+  /// When set, the screen loads and continues this existing conversation.
+  /// When null, a new conversation is started on the first message.
+  final String? conversationId;
+
+  const AiChatScreen({super.key, this.conversationId});
   @override
   State<AiChatScreen> createState() => _AiChatScreenState();
 }
@@ -20,16 +24,16 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final _ctrl   = TextEditingController();
   final _scroll = ScrollController();
   final _tts    = FlutterTts();
-  final _stt    = SpeechToText();
   bool _loading    = false;
   bool _hasText    = false;
-  bool _listening  = false;
+  bool _loadingHistory = false;
   int? _speakingIdx;
   String? _course; // null = General mode
+  String? _conversationId;
   final List<String> _courses = [];
 
   final List<_Msg> _messages = [
-    _Msg(text: "Hi! I'm your AI study assistant. Ask me anything about your courses — I'll explain concepts, solve problems, and help you prepare for exams. 📚", isAi: true),
+    _Msg(text: "Hi! I'm ZChat AI, your academic assistant. Ask me anything about your courses — I'll explain concepts, solve problems, and help you prepare for exams. 📚", isAi: true),
   ];
 
   static const _suggestions = [
@@ -59,11 +63,14 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _scrollDown();
 
     try {
-      final reply = await AiService.chat(
+      final result = await AiService.chat(
         messages: List.from(_history),
         courseId: _course?.replaceAll(' ', ''),
+        conversationId: _conversationId,
       );
       if (!mounted) return;
+      final reply = result['reply'] as String;
+      _conversationId = result['conversationId'] as String? ?? _conversationId;
       _history.add({'role': 'assistant', 'content': reply});
       setState(() { _loading = false; _messages.add(_Msg(text: reply, isAi: true)); });
     } catch (e) {
@@ -80,8 +87,32 @@ class _AiChatScreenState extends State<AiChatScreen> {
   void initState() {
     super.initState();
     _initTts();
-    _initStt();
     _loadCourses();
+    if (widget.conversationId != null) _loadConversation(widget.conversationId!);
+  }
+
+  Future<void> _loadConversation(String id) async {
+    setState(() => _loadingHistory = true);
+    try {
+      final convo = await AiService.fetchConversation(id);
+      final msgs = List<Map<String, dynamic>>.from(convo['messages'] as List? ?? []);
+      if (!mounted) return;
+      setState(() {
+        _conversationId = convo['conversationId'] as String? ?? id;
+        _messages.clear();
+        _history.clear();
+        for (final m in msgs) {
+          final role = m['role'] as String;
+          final content = m['content'] as String;
+          _history.add({'role': role, 'content': content});
+          _messages.add(_Msg(text: content, isAi: role == 'assistant'));
+        }
+        _loadingHistory = false;
+      });
+      _scrollDown();
+    } catch (e) {
+      if (mounted) setState(() => _loadingHistory = false);
+    }
   }
 
   Future<void> _loadCourses() async {
@@ -110,10 +141,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _tts.setCompletionHandler(() { if (mounted) setState(() => _speakingIdx = null); });
   }
 
-  Future<void> _initStt() async {
-    await _stt.initialize();
-  }
-
   Future<void> _speak(String text, int index) async {
     if (_speakingIdx == index) {
       await _tts.stop();
@@ -125,29 +152,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
     await _tts.speak(text);
   }
 
-  Future<void> _toggleListen() async {
-    if (_listening) {
-      await _stt.stop();
-      if (mounted) setState(() => _listening = false);
-      return;
-    }
-    final available = await _stt.initialize();
-    if (!available) return;
-    if (mounted) setState(() => _listening = true);
-    _stt.listen(
-      onResult: (result) {
-        if (mounted) {
-          setState(() {
-            _ctrl.text = result.recognizedWords;
-            _hasText = result.recognizedWords.trim().isNotEmpty;
-          });
-        }
-      },
-      listenOptions: SpeechListenOptions(
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 3),
-      ),
-    );
+  void _onVoiceResult(String text) {
+    setState(() {
+      _ctrl.text = text;
+      _hasText = text.trim().isNotEmpty;
+    });
   }
 
   void _scrollDown() => Future.delayed(const Duration(milliseconds: 100), () {
@@ -157,7 +166,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
   @override
   void dispose() {
     _tts.stop();
-    _stt.stop();
     _ctrl.dispose();
     _scroll.dispose();
     super.dispose();
@@ -185,7 +193,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                     child: Row(children: [
                       IconButton(
                         icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-                        onPressed: () => context.go('/home'),
+                        onPressed: () => context.canPop() ? context.pop() : context.go('/ai'),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
                       ),
@@ -198,7 +206,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                           errorBuilder: (ctx, e, s) => const Text('ZCHAT', style: TextStyle(color: Color(0xFF2EA3FF), fontSize: 16, fontWeight: FontWeight.w900)),
                         ),
                         const SizedBox(width: 6),
-                        const Text('Tutor', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+                        const Text('ZChat AI', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
                       ])),
                       GestureDetector(
                         onTap: () => _showCourseSelector(context),
@@ -232,7 +240,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
               ),
             ),
             Expanded(
-              child: ListView.builder(
+              child: _loadingHistory
+                  ? const Center(child: CircularProgressIndicator(color: Color(0xFFB794F4)))
+                  : ListView.builder(
                 controller: _scroll,
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 itemCount: _messages.length + (_loading ? 1 : 0) + (_messages.length == 1 ? 1 : 0),
@@ -268,14 +278,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   decoration: BoxDecoration(color: Colors.white.withAlpha(18), borderRadius: BorderRadius.circular(22), border: Border.all(color: Colors.white.withAlpha(35))),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                     const SizedBox(width: 4),
-                    IconButton(
-                      icon: Icon(
-                        _listening ? Icons.mic_off_rounded : Icons.mic_rounded,
-                        color: _listening ? Colors.redAccent : const Color(0xFFB794F4),
-                        size: 20,
-                      ),
-                      onPressed: _toggleListen,
-                    ),
+                    VoiceInputButton(onResult: _onVoiceResult),
                     Expanded(
                       child: TextField(
                         controller: _ctrl, maxLines: null,
@@ -366,7 +369,7 @@ class _Bubble extends StatelessWidget {
             Row(children: [
               const Icon(Icons.auto_awesome_rounded, size: 11, color: Color(0xFFB794F4)),
               const SizedBox(width: 4),
-              const Expanded(child: Text('AI Tutor', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFFB794F4)))),
+              const Expanded(child: Text('ZChat AI', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFFB794F4)))),
               GestureDetector(
                 onTap: () => onSpeak?.call(msg.text, index),
                 child: Icon(

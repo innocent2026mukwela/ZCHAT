@@ -19,6 +19,7 @@ import 'screens/classroom/live_session_screen.dart';
 import 'screens/classroom/assignment_list_screen.dart';
 import 'screens/classroom/submission_screen.dart';
 import 'screens/classroom/grade_view_screen.dart';
+import 'screens/ai_assistant/ai_home_screen.dart';
 import 'screens/ai_assistant/ai_chat_screen.dart';
 import 'screens/ai_assistant/quiz_screen.dart';
 import 'screens/ai_assistant/summary_screen.dart';
@@ -111,7 +112,8 @@ final appRouter = GoRouter(
     ),
 
     // AI
-    GoRoute(path: '/ai',                       builder: (c, s) => const AiChatScreen()),
+    GoRoute(path: '/ai',                       builder: (c, s) => const AiHomeScreen()),
+    GoRoute(path: '/ai/chat',                   builder: (c, s) => AiChatScreen(conversationId: s.extra as String?)),
     GoRoute(path: '/ai/quiz/:courseId',         builder: (c, s) => QuizScreen(courseId: s.pathParameters['courseId']!)),
     GoRoute(path: '/ai/summaries/:courseId',    builder: (c, s) => SummaryScreen(courseId: s.pathParameters['courseId']!)),
 

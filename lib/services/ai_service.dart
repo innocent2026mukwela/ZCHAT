@@ -20,21 +20,29 @@ class AiService {
     };
   }
 
-  /// Sends the full conversation history to Claude and returns the reply text.
+  /// Sends the full conversation history to Claude and returns the reply
+  /// along with the conversation's ID (so follow-up turns can resume it).
   ///
   /// [messages] — the full chat so far, e.g.:
   ///   [{'role': 'user', 'content': 'Explain recursion'}, ...]
   ///
   /// [courseId] — optional active course; Claude uses it to call data tools
   ///   like grade lookups and deadline checks.
-  static Future<String> chat({
+  ///
+  /// [conversationId] — pass the ID returned from a previous call to append
+  ///   to that conversation; omit to start a new one.
+  ///
+  /// Returns `{'reply': String, 'conversationId': String}`.
+  static Future<Map<String, dynamic>> chat({
     required List<Map<String, String>> messages,
     String? courseId,
+    String? conversationId,
   }) async {
     final headers = await _authHeaders();
     final body = jsonEncode({
       'messages': messages,
       'courseId': courseId,
+      'conversationId': conversationId,
     });
 
     final response = await http
@@ -43,7 +51,10 @@ class AiService {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      return data['reply'] as String? ?? 'No response received.';
+      return {
+        'reply': data['reply'] as String? ?? 'No response received.',
+        'conversationId': data['conversationId'] as String?,
+      };
     }
     try {
       final err = jsonDecode(response.body) as Map<String, dynamic>;
@@ -51,6 +62,36 @@ class AiService {
     } catch (_) {
       throw Exception('Request failed (${response.statusCode})');
     }
+  }
+
+  /// Lists the user's recent AI conversations (most recently active first).
+  /// Each entry has: id, title, last_question, last_answer, updated_at.
+  static Future<List<Map<String, dynamic>>> fetchConversations() async {
+    final headers = await _authHeaders();
+    final response = await http
+        .get(Uri.parse('$_baseUrl/conversations'), headers: headers)
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['conversations'] as List? ?? []);
+    }
+    throw Exception('Could not fetch conversations');
+  }
+
+  /// Fetches the full message history for a conversation, ready to drop
+  /// straight into the chat screen's history array.
+  /// Returns `{'conversationId': String, 'title': String?, 'messages': [...]}`.
+  static Future<Map<String, dynamic>> fetchConversation(String id) async {
+    final headers = await _authHeaders();
+    final response = await http
+        .get(Uri.parse('$_baseUrl/conversations/$id'), headers: headers)
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    throw Exception('Could not fetch conversation');
   }
 
   /// Generates a multiple-choice quiz from a past paper stored in the backend.
