@@ -7,7 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 /// 10.0.2.2 = Android emulator loopback to host machine.
 /// For a physical device on the same Wi-Fi, use your machine's LAN IP.
 class AiService {
-  static const _baseUrl = 'http://localhost:5000/api/ai';
+  static const _baseUrl = 'http://172.20.10.3:5000/api/ai';
 
   /// Fetches the current Firebase ID token and returns auth + content headers.
   static Future<Map<String, String>> _authHeaders() async {
