@@ -1,13 +1,17 @@
-import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+/// Handles authentication via the ZCHAT backend's OTP endpoints, bridging
+/// into Firebase Auth with a custom token.
+/// 10.0.2.2 = Android emulator loopback to host machine.
+/// For a physical device on the same Wi-Fi, use your machine's LAN IP.
 class AuthService {
+  static const _baseUrl = 'http://localhost:5000/api/auth';
+
   static final _auth = FirebaseAuth.instance;
   static final _db   = FirebaseFirestore.instance;
-
-  // Stores the verificationId between sendOtp and verifyOtp calls
-  static String? _verificationId;
 
   // ── Current user ──────────────────────────────────────────────────────────
 
@@ -18,66 +22,37 @@ class AuthService {
   // ── Send OTP ──────────────────────────────────────────────────────────────
 
   static Future<void> sendOtp(String phoneNumber) async {
-    final completer = Completer<void>();
-
-    // iOS: skip APNs/reCAPTCHA app-verification flow. Without a paid Apple
-    // Developer account (no valid APNs entitlement), that flow crashes
-    // FirebaseAuth's verifyPhoneNumber with EXC_BREAKPOINT (known SDK bug).
-    await _auth.setSettings(appVerificationDisabledForTesting: true);
-
-    await _auth.verifyPhoneNumber(
-      phoneNumber: phoneNumber,
-      timeout: const Duration(seconds: 60),
-
-      // Auto-retrieval (Android only — SMS auto-filled)
-      verificationCompleted: (PhoneAuthCredential credential) async {
-        await _auth.signInWithCredential(credential);
-        if (!completer.isCompleted) completer.complete();
-      },
-
-      verificationFailed: (FirebaseAuthException e) {
-        if (!completer.isCompleted) {
-          completer.completeError(Exception(_friendlyError(e.code, e.message)));
-        }
-      },
-
-      codeSent: (String verificationId, int? resendToken) {
-        _verificationId = verificationId;
-        if (!completer.isCompleted) completer.complete();
-      },
-
-      codeAutoRetrievalTimeout: (String verificationId) {
-        _verificationId = verificationId;
-        if (!completer.isCompleted) completer.complete();
-      },
+    final res = await http.post(
+      Uri.parse('$_baseUrl/send-otp'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'phoneNumber': phoneNumber}),
     );
 
-    return completer.future;
+    if (res.statusCode != 200) {
+      throw Exception(_errorMessage(res));
+    }
   }
 
   // ── Verify OTP ────────────────────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> verifyOtp(
       String phoneNumber, String otp) async {
-    if (_verificationId == null) {
-      throw Exception('Session expired. Please request a new code.');
-    }
-
-    final credential = PhoneAuthProvider.credential(
-      verificationId: _verificationId!,
-      smsCode: otp,
+    final res = await http.post(
+      Uri.parse('$_baseUrl/verify-otp'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'phoneNumber': phoneNumber, 'otp': otp}),
     );
 
-    final result = await _auth.signInWithCredential(credential);
-    final user   = result.user!;
+    if (res.statusCode != 200) {
+      throw Exception(_errorMessage(res));
+    }
 
-    // Check if the user has a profile in Firestore
-    final doc = await _db.collection('users').doc(user.uid).get();
-    final needsProfile = !doc.exists || doc.data()?['profileComplete'] != true;
+    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    await _auth.signInWithCustomToken(json['firebaseToken'] as String);
 
     return {
-      'uid': user.uid,
-      'needsProfile': needsProfile,
+      'uid': _auth.currentUser!.uid,
+      'needsProfile': json['needsProfile'],
     };
   }
 
@@ -134,19 +109,14 @@ class AuthService {
     await _auth.signOut();
   }
 
-  // ── Friendly error messages ───────────────────────────────────────────────
+  // ── Error helper ─────────────────────────────────────────────────────────
 
-  static String _friendlyError(String code, String? message) {
-    switch (code) {
-      case 'invalid-phone-number':
-        return 'Invalid phone number. Please check and try again.';
-      case 'too-many-requests':
-        return 'Too many attempts. Please wait a moment and try again.';
-      case 'quota-exceeded':
-        return 'SMS quota exceeded. Please try again later.';
-      default:
-        return message ?? 'Something went wrong. Please try again.';
+  static String _errorMessage(http.Response res) {
+    try {
+      final json = jsonDecode(res.body) as Map<String, dynamic>;
+      return json['error'] as String? ?? 'Something went wrong. Please try again.';
+    } catch (_) {
+      return 'Something went wrong. Please try again.';
     }
   }
 }
-
