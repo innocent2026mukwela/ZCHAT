@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/chat_service.dart';
 import '../../utils/glass.dart';
+import '../../utils/helpers.dart';
 
 class NewChatScreen extends StatefulWidget {
   const NewChatScreen({super.key});
@@ -62,7 +63,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
     for (final c in contacts) {
       final name = c.displayName ?? '';
       for (final p in c.phones) {
-        final e164 = _toE164(p.number);
+        final e164 = toE164(p.number);
         if (e164.isNotEmpty) {
           entries.add(_ContactEntry(
             displayName: name.isNotEmpty ? name : e164,
@@ -220,15 +221,6 @@ class _NewChatScreenState extends State<NewChatScreen> {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-
-  String _toE164(String raw) {
-    final digits = raw.replaceAll(RegExp(r'\D'), '');
-    if (digits.isEmpty) return '';
-    if (digits.startsWith('260') && digits.length >= 12) return '+$digits';
-    if (digits.startsWith('0')   && digits.length >= 10) return '+260${digits.substring(1)}';
-    if (digits.length == 9)                              return '+260$digits';
-    return '';
-  }
 
   // ── Build ─────────────────────────────────────────────────────────────────
 

@@ -13,6 +13,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:video_player/video_player.dart';
 import '../../services/chat_service.dart';
+import '../../utils/helpers.dart';
 import '../../services/status_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
@@ -92,7 +93,7 @@ class _StatusScreenState extends State<StatusScreen> {
     final phones = <String>{};
     for (final c in contacts) {
       for (final p in c.phones) {
-        final n = _toE164(p.number);
+        final n = toE164(p.number);
         if (n.isNotEmpty) phones.add(n);
       }
     }
@@ -110,15 +111,6 @@ class _StatusScreenState extends State<StatusScreen> {
       }
     }
     return uids;
-  }
-
-  String _toE164(String raw) {
-    final digits = raw.replaceAll(RegExp(r'\D'), '');
-    if (digits.isEmpty) return '';
-    if (digits.startsWith('260') && digits.length >= 12) return '+$digits';
-    if (digits.startsWith('0')   && digits.length >= 10) return '+260${digits.substring(1)}';
-    if (digits.length == 9) return '+260$digits';
-    return '';
   }
 
   Future<void> _toggleMute(String uid) async {

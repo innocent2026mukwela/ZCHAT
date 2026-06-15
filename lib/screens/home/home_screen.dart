@@ -11,6 +11,7 @@ import '../../services/chat_service.dart';
 import '../../services/call_service.dart';
 import '../../services/status_service.dart';
 import '../../utils/glass.dart';
+import '../../utils/helpers.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -584,7 +585,7 @@ class _StatusTabState extends State<_StatusTab> {
     final phones = <String>{};
     for (final c in contacts) {
       for (final p in c.phones) {
-        final n = _toE164(p.number);
+        final n = toE164(p.number);
         if (n.isNotEmpty) phones.add(n);
       }
     }
@@ -600,15 +601,6 @@ class _StatusTabState extends State<_StatusTab> {
       }
     }
     return uids;
-  }
-
-  String _toE164(String raw) {
-    final digits = raw.replaceAll(RegExp(r'\D'), '');
-    if (digits.isEmpty) return '';
-    if (digits.startsWith('260') && digits.length >= 12) return '+$digits';
-    if (digits.startsWith('0')   && digits.length >= 10) return '+260${digits.substring(1)}';
-    if (digits.length == 9) return '+260$digits';
-    return '';
   }
 
   @override
