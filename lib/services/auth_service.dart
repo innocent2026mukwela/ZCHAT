@@ -20,6 +20,11 @@ class AuthService {
   static Future<void> sendOtp(String phoneNumber) async {
     final completer = Completer<void>();
 
+    // iOS: skip APNs/reCAPTCHA app-verification flow. Without a paid Apple
+    // Developer account (no valid APNs entitlement), that flow crashes
+    // FirebaseAuth's verifyPhoneNumber with EXC_BREAKPOINT (known SDK bug).
+    await _auth.setSettings(appVerificationDisabledForTesting: true);
+
     await _auth.verifyPhoneNumber(
       phoneNumber: phoneNumber,
       timeout: const Duration(seconds: 60),
