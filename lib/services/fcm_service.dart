@@ -45,8 +45,15 @@ class FcmService {
   static Future<void> _saveToken() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-    final token = await _fcm.getToken();
-    if (token != null) await _persistToken(token);
+    try {
+      // On iOS, getToken() waits for an APNs device token. Without a paid
+      // Apple Developer push entitlement (sideload environment), that
+      // registration never completes — so this must not block app startup.
+      final token = await _fcm.getToken().timeout(const Duration(seconds: 5));
+      if (token != null) await _persistToken(token);
+    } catch (e) {
+      debugPrint('[FCM] Could not get token: $e');
+    }
   }
 
   static Future<void> _persistToken(String token) async {
