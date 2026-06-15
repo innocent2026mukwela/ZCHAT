@@ -70,7 +70,7 @@ Future<List<Map<String, dynamic>>> _loadZchatContacts() async {
         .toList();
   }
 
-  final contacts = await FlutterContacts.getContacts(withProperties: true);
+  final contacts = await FlutterContacts.getAll(properties: ContactProperties.allProperties);
   final phones   = <String>{};
   for (final c in contacts) {
     for (final p in c.phones) {

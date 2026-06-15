@@ -57,14 +57,15 @@ class _NewChatScreenState extends State<NewChatScreen> {
       return;
     }
 
-    final contacts = await FlutterContacts.getContacts(withProperties: true, withPhoto: false);
+    final contacts = await FlutterContacts.getAll(properties: ContactProperties.allProperties);
     final List<_ContactEntry> entries = [];
     for (final c in contacts) {
+      final name = c.displayName ?? '';
       for (final p in c.phones) {
         final e164 = _toE164(p.number);
         if (e164.isNotEmpty) {
           entries.add(_ContactEntry(
-            displayName: c.displayName.isNotEmpty ? c.displayName : e164,
+            displayName: name.isNotEmpty ? name : e164,
             e164: e164,
             raw: p.number,
           ));
@@ -184,7 +185,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
   Future<void> _newContact() async {
     final status = await Permission.contacts.request();
     if (!status.isGranted) return;
-    await FlutterContacts.openExternalInsert();
+    await FlutterContacts.native.showCreator();
     _loadContacts();
   }
 

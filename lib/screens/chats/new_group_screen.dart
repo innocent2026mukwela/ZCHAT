@@ -54,7 +54,7 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
         setState(() => _loading = false);
         return;
       }
-      final deviceContacts = await FlutterContacts.getContacts(withProperties: true);
+      final deviceContacts = await FlutterContacts.getAll(properties: ContactProperties.allProperties);
       final phones = deviceContacts
           .expand((c) => c.phones.map((p) =>
               p.number.replaceAll(RegExp(r'\s|-|\(|\)'), '')))
@@ -81,7 +81,7 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
                         phone.replaceAll('+', ''))),
                 orElse: () => Contact(),
               );
-              contactName = match.displayName;
+              contactName = match.displayName ?? '';
             }
             return {
               ...data,

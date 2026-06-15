@@ -88,7 +88,7 @@ class _StatusScreenState extends State<StatusScreen> {
   Future<List<String>> _zchatContactUids() async {
     final status = await Permission.contacts.request();
     if (!status.isGranted) return [];
-    final contacts = await FlutterContacts.getContacts(withProperties: true);
+    final contacts = await FlutterContacts.getAll(properties: ContactProperties.allProperties);
     final phones = <String>{};
     for (final c in contacts) {
       for (final p in c.phones) {
