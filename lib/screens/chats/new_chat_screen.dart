@@ -51,7 +51,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = 'Contacts permission denied.\nGo to Settings → Apps → ZCHAT → Permissions.';
+          _error = 'Contacts permission denied.\nEnable Contacts access for ZCHAT in Settings.';
         });
       }
       return;
@@ -765,19 +765,35 @@ class _ErrorView extends StatelessWidget {
           style: TextStyle(color: Colors.white.withAlpha(140),
               fontSize: 14, height: 1.5)),
         const SizedBox(height: 20),
-        GestureDetector(
-          onTap: onRetry,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2563EB).withAlpha(60),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80)),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          GestureDetector(
+            onTap: () => openAppSettings(),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2563EB).withAlpha(60),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80)),
+              ),
+              child: const Text('Open Settings',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
             ),
-            child: const Text('Try again',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
           ),
-        ),
+          const SizedBox(width: 12),
+          GestureDetector(
+            onTap: onRetry,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(18),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withAlpha(40)),
+              ),
+              child: const Text('Try again',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ]),
       ]),
     ),
   );
