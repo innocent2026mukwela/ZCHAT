@@ -45,6 +45,15 @@ post_install do |installer|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
       # Disable bitcode (deprecated in Xcode 14)
       config.build_settings['ENABLE_BITCODE'] = 'NO'
+      # Enable permission_handler permissions used by this app
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '$(inherited)',
+        'PERMISSION_CONTACTS=1',
+        'PERMISSION_PHOTOS=1',
+        'PERMISSION_CAMERA=1',
+        'PERMISSION_MICROPHONE=1',
+        'PERMISSION_NOTIFICATIONS=1',
+      ]
     end
   end
 end
