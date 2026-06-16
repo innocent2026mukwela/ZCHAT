@@ -62,17 +62,22 @@ class _NewChatScreenState extends State<NewChatScreen> {
     final List<_ContactEntry> entries = [];
     for (final c in contacts) {
       final name = c.displayName ?? '';
-      for (final p in c.phones) {
-        final e164 = toE164(p.number);
-        if (e164.isNotEmpty) {
-          entries.add(_ContactEntry(
-            displayName: name.isNotEmpty ? name : e164,
-            e164: e164,
-            raw: p.number,
-          ));
-          break;
-        }
-      }
+      final allE164s = c.phones
+          .map((p) => toE164(p.number))
+          .where((e) => e.isNotEmpty)
+          .toSet()
+          .toList();
+      if (allE164s.isEmpty) continue;
+      final rawPhone = c.phones.firstWhere(
+        (p) => toE164(p.number).isNotEmpty,
+        orElse: () => c.phones.first,
+      ).number;
+      entries.add(_ContactEntry(
+        displayName: name.isNotEmpty ? name : allE164s.first,
+        e164: allE164s.first,
+        raw: rawPhone,
+        allE164s: allE164s,
+      ));
     }
     entries.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
 
@@ -84,8 +89,8 @@ class _NewChatScreenState extends State<NewChatScreen> {
       });
     }
 
-    // Batch-check which contacts are on ZCHAT (in background)
-    _batchCheckZchat(entries.map((e) => e.e164).toList());
+    // Batch-check which contacts are on ZCHAT (all phone numbers, in background)
+    _batchCheckZchat(entries.expand((e) => e.allE164s).toList());
   }
 
   Future<void> _batchCheckZchat(List<String> phones) async {
@@ -132,9 +137,17 @@ class _NewChatScreenState extends State<NewChatScreen> {
 
   // ── Tap → ZCHAT check → chat or invite ───────────────────────────────────
 
+  _ZchatUser? _zchatForEntry(_ContactEntry entry) {
+    for (final n in entry.allE164s) {
+      final u = _zchatMap[n];
+      if (u != null) return u;
+    }
+    return null;
+  }
+
   Future<void> _onContactTap(_ContactEntry entry) async {
-    // If we already know from batch check
-    final known = _zchatMap[entry.e164];
+    // If we already know from batch check, use whichever number matched
+    final known = _zchatForEntry(entry);
     if (known != null) {
       await _openChat(known.uid, entry.displayName);
       return;
@@ -146,7 +159,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
       final myUid = FirebaseAuth.instance.currentUser?.uid;
       final snap  = await FirebaseFirestore.instance
           .collection('users')
-          .where('phoneNumber', isEqualTo: entry.e164)
+          .where('phoneNumber', whereIn: entry.allE164s)
           .limit(1)
           .get();
       if (!mounted) return;
@@ -400,7 +413,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
 
         // Contact tile
         final entry       = item.entry!;
-        final zchat       = _zchatMap[entry.e164];
+        final zchat       = _zchatForEntry(entry);
         final isOnZchat   = zchat != null;
         final color       = _colors[entry.displayName.codeUnitAt(0) % _colors.length];
         final isChecking  = _checking.contains(entry.e164);
@@ -706,8 +719,9 @@ class _InviteScreen extends StatelessWidget {
 
 class _ContactEntry {
   final String displayName, e164, raw;
+  final List<String> allE164s;
   const _ContactEntry({required this.displayName, required this.e164,
-      required this.raw});
+      required this.raw, required this.allE164s});
 }
 
 class _ZchatUser {
