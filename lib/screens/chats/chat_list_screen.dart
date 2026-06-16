@@ -87,7 +87,16 @@ class _ChatListScreenState extends State<ChatListScreen>
             localizedReason: 'Unlock "$name"',
             options: const AuthenticationOptions(stickyAuth: true),
           );
-        } catch (_) {}
+        } catch (e) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('Biometric error: ${e.toString().replaceFirst("Exception: ", "")}'),
+              backgroundColor: Colors.redAccent,
+              behavior: SnackBarBehavior.floating,
+            ));
+          }
+          return;
+        }
       } else {
         // Fallback: just ask confirmation
         authed = await showDialog<bool>(

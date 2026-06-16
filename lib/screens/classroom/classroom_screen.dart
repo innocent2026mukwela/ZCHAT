@@ -66,12 +66,18 @@ class _ClassroomBody extends StatelessWidget {
               .orderBy('scheduledAt', descending: true)
               .snapshots(),
           builder: (context, sessionsSnap) {
+            if (sessionsSnap.hasError) {
+              return Center(child: Text('Could not load sessions', style: TextStyle(color: Colors.white.withAlpha(140))));
+            }
             return StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('courses').doc(courseId)
                   .collection('assignments')
                   .snapshots(),
               builder: (context, assignSnap) {
+                if (assignSnap.hasError) {
+                  return Center(child: Text('Could not load assignments', style: TextStyle(color: Colors.white.withAlpha(140))));
+                }
                 final sessions   = sessionsSnap.data?.docs ?? [];
                 final assigns    = assignSnap.data?.docs ?? [];
                 final courseData = courseSnap.data?.data() as Map<String, dynamic>? ?? {};

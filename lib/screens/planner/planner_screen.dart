@@ -161,6 +161,9 @@ class _TimetableTab extends StatelessWidget {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF), strokeWidth: 2));
         }
+        if (snap.hasError) {
+          return Center(child: Text('Could not load timetable', style: TextStyle(color: Colors.white.withAlpha(140))));
+        }
         final slots = snap.data ?? [];
         if (slots.isEmpty) {
           return _EmptyState(
@@ -281,6 +284,9 @@ class _StudyPlanTab extends StatelessWidget {
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF), strokeWidth: 2));
+        }
+        if (snap.hasError) {
+          return Center(child: Text('Could not load study plans', style: TextStyle(color: Colors.white.withAlpha(140))));
         }
         final plans = snap.data ?? [];
         if (plans.isEmpty) {
@@ -420,6 +426,9 @@ class _StudyGuidesTab extends StatelessWidget {
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF), strokeWidth: 2));
+        }
+        if (snap.hasError) {
+          return Center(child: Text('Could not load study guides', style: TextStyle(color: Colors.white.withAlpha(140))));
         }
         final guides = snap.data ?? [];
         if (guides.isEmpty) {

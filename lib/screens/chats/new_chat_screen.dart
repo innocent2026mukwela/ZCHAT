@@ -250,7 +250,15 @@ class _NewChatScreenState extends State<NewChatScreen> {
                 );
               }
             }
-          } catch (_) {}
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text('Lookup failed: ${e.toString().replaceFirst("Exception: ", "")}'),
+                backgroundColor: Colors.redAccent,
+                behavior: SnackBarBehavior.floating,
+              ));
+            }
+          }
         },
       ),
     ));

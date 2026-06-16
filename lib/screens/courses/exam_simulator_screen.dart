@@ -263,6 +263,21 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
         .toSet()
         .toList();
 
+    // Compute actual time used from countdown
+    final secondsUsed = 5400 - _secondsLeft;
+    final timeTaken = _formatTime(secondsUsed);
+
+    // Compute strong area from correctly answered questions
+    final topicCounts = <String, int>{};
+    for (var i = 0; i < qs.length; i++) {
+      if (_answers[i] == qs[i].answer) {
+        topicCounts[qs[i].topic] = (topicCounts[qs[i].topic] ?? 0) + 1;
+      }
+    }
+    final strongArea = topicCounts.isEmpty
+        ? 'None'
+        : topicCounts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
       children: [
@@ -278,8 +293,8 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
               Text('$_score/$total correct',
                   style: TextStyle(color: Colors.white.withAlpha(175), fontWeight: FontWeight.w600)),
               const SizedBox(height: 18),
-              _ResultRow('Time taken', '1h 17m'),
-              _ResultRow('Strong area', 'Trees'),
+              _ResultRow('Time taken', timeTaken),
+              _ResultRow('Strong area', strongArea),
               _ResultRow('Needs work', weakTopics.isEmpty ? 'None' : weakTopics.join(', ')),
             ],
           ),

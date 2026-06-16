@@ -125,7 +125,16 @@ class _ChatScreenState extends State<ChatScreen>
         imageUrl: url,
       );
       Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to send document: ${e.toString().replaceFirst("Exception: ", "")}'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    }
   }
 
   Future<void> _pickImage({ImageSource source = ImageSource.gallery}) async {
@@ -2402,7 +2411,16 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
             localizedReason: 'Confirm to lock this chat',
             options: const AuthenticationOptions(stickyAuth: true),
           );
-        } catch (_) {}
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('Biometric error: ${e.toString().replaceFirst("Exception: ", "")}'),
+              backgroundColor: Colors.redAccent,
+              behavior: SnackBarBehavior.floating,
+            ));
+          }
+          return;
+        }
         if (!authed) return;
       }
     }

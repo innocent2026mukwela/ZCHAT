@@ -48,10 +48,11 @@ class _StatusScreenState extends State<StatusScreen> {
   List<Map<String, dynamic>> _myItems         = [];
   Map<String, dynamic>?      _myProfile;
   Set<String>                _mutedUids        = {};
-  bool   _loading   = true;
-  bool   _searching = false;
-  String _search    = '';
-  String _myUid     = '';
+  bool    _loading   = true;
+  String? _loadError;
+  bool    _searching = false;
+  String  _search    = '';
+  String  _myUid     = '';
   final  _searchCtrl = TextEditingController();
 
   @override
@@ -76,13 +77,13 @@ class _StatusScreenState extends State<StatusScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() { _loading = true; _loadError = null; });
     try {
       final uids     = await _zchatContactUids();
       final statuses = await StatusService.fetchContactStatuses(uids);
       if (mounted) setState(() { _contactStatuses = statuses; _loading = false; });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _loadError = e.toString().replaceFirst('Exception: ', ''); });
     }
   }
 
@@ -262,6 +263,22 @@ class _StatusScreenState extends State<StatusScreen> {
                         padding: EdgeInsets.all(40),
                         child: Center(child: CircularProgressIndicator(
                             color: Color(0xFF4F8AFF), strokeWidth: 2)),
+                      )
+                    else if (_loadError != null)
+                      Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 40),
+                          const SizedBox(height: 12),
+                          Text(_loadError!, textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.white.withAlpha(160))),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: _load,
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB)),
+                            child: const Text('Retry'),
+                          ),
+                        ]),
                       )
                     else if (_visibleStatuses.isEmpty && _mutedStatuses.isEmpty)
                       _buildEmpty()
@@ -1017,7 +1034,16 @@ class _StatusViewerState extends State<_StatusViewer>
       if (!mounted) return;
       nav.pop();
       router.push('/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(ownerName)}');
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not send message: ${e.toString().replaceFirst("Exception: ", "")}'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    }
   }
 
   void _showSeenBy() {

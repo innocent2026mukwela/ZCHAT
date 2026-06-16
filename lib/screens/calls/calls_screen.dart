@@ -311,7 +311,7 @@ class _CallsScreenState extends State<CallsScreen>
     if (otherUid.isEmpty) return;
     final chatId = await ChatService.getOrCreateChat(otherUid);
     if (!mounted) return;
-    context.push('/chat/$chatId');
+    context.push('/chats/$chatId');
   }
 
   Widget _buildAppBar() {
