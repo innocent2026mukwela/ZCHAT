@@ -17,6 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../screens/calls/outgoing_call_screen.dart';
 import '../../services/ai_service.dart';
 import '../../services/chat_service.dart';
+import '../../services/presence_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/emoji_picker_panel.dart';
 
@@ -34,7 +35,7 @@ class ChatScreen extends StatefulWidget {
 // ── State ─────────────────────────────────────────────────────────────────────
 
 class _ChatScreenState extends State<ChatScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   final _ctrl   = TextEditingController();
   final _scroll = ScrollController();
   bool _hasText = false;
@@ -68,6 +69,14 @@ class _ChatScreenState extends State<ChatScreen>
 
   // Pinned message
   Map<String, dynamic>? _pinnedMessage;
+
+  // Presence (gap 3)
+  bool   _isOnline     = false;
+  String _lastSeenText = '';
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _presenceSub;
+
+  // Disappearing messages enforcement (gap 8)
+  String _disappearing = 'off';
 
   String get _myUid => FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -120,8 +129,11 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<void> _pickImage({ImageSource source = ImageSource.gallery}) async {
     final picked = await ImagePicker().pickImage(source: source, imageQuality: 75);
-    if (picked == null) return;
-    await ChatService.sendImage(widget.chatId, File(picked.path));
+    if (picked == null || !mounted) return;
+    final caption = await _showCaptionSheet(File(picked.path));
+    if (caption == null) return; // user dismissed without sending
+    await ChatService.sendImage(widget.chatId, File(picked.path),
+        caption: caption);
     Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
   }
 
@@ -192,12 +204,27 @@ class _ChatScreenState extends State<ChatScreen>
     )..repeat(reverse: true);
     ChatService.markRead(widget.chatId);
     _loadPinnedMessage();
+    _loadDisappearing();
+    WidgetsBinding.instance.addObserver(this);
+    PresenceService.setOnline();
 
     // Typing indicator: listen to other user's typing state
     if (_isDirect && _otherUid.isNotEmpty) {
       _typingSub = ChatService.typingStream(widget.chatId, _otherUid)
           .listen((typing) {
         if (mounted) setState(() => _isTyping = typing);
+      });
+
+      // Presence: stream other user's online status
+      _presenceSub = PresenceService.stream(_otherUid).listen((snap) {
+        if (!mounted) return;
+        final data   = snap.data();
+        final online = (data?['isOnline'] as bool?) == true;
+        final ts     = data?['lastSeen'] as Timestamp?;
+        setState(() {
+          _isOnline     = online;
+          _lastSeenText = online ? '' : PresenceService.formatLastSeen(ts);
+        });
       });
     }
 
@@ -214,7 +241,20 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      PresenceService.setOnline();
+    } else if (state == AppLifecycleState.paused ||
+               state == AppLifecycleState.detached) {
+      PresenceService.setOffline();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    PresenceService.setOffline();
+    _presenceSub?.cancel();
     _typingTimer?.cancel();
     _typingSub?.cancel();
     _starredSub?.cancel();
@@ -225,6 +265,98 @@ class _ChatScreenState extends State<ChatScreen>
     _micPulse.dispose();
     _typingAnim.dispose();
     super.dispose();
+  }
+
+  // ── Helpers (gaps 1, 7, 8) ───────────────────────────────────────────────
+
+  Future<void> _loadDisappearing() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('chats').doc(widget.chatId).get();
+    if (mounted && doc.exists) {
+      setState(() =>
+          _disappearing = doc.data()?['disappearingMessages'] as String? ?? 'off');
+    }
+  }
+
+  bool _isExpired(_Msg msg) {
+    if (_disappearing == 'off') return false;
+    final duration = _disappearing == '24h'
+        ? const Duration(hours: 24)
+        : _disappearing == '7d'
+            ? const Duration(days: 7)
+            : const Duration(days: 30);
+    return DateTime.now().isAfter(msg.createdAt.add(duration));
+  }
+
+  static const _monthNames = [
+    'JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'
+  ];
+
+  String _dateLabel(DateTime dt) {
+    final now    = DateTime.now();
+    final today  = DateTime(now.year, now.month, now.day);
+    final msgDay = DateTime(dt.year, dt.month, dt.day);
+    final diff   = today.difference(msgDay).inDays;
+    if (diff == 0) return 'TODAY';
+    if (diff == 1) return 'YESTERDAY';
+    return '${_monthNames[dt.month - 1]} ${dt.day}';
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  // Caption sheet shown before sending an image (gap 7)
+  Future<String?> _showCaptionSheet(File imageFile) {
+    final ctrl = TextEditingController();
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF0E1829),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(22)),
+              child: Image.file(imageFile,
+                  height: 280,
+                  width: double.infinity,
+                  fit: BoxFit.cover),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 8, 16),
+              child: Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: ctrl,
+                    autofocus: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    decoration: InputDecoration(
+                      hintText: 'Add a caption…',
+                      hintStyle:
+                          TextStyle(color: Colors.white.withAlpha(100)),
+                      border: InputBorder.none,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.send_rounded,
+                      color: Color(0xFF4F8AFF)),
+                  onPressed: () =>
+                      Navigator.pop(ctx, ctrl.text.trim()),
+                ),
+              ]),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   // ── Pinned message ────────────────────────────────────────────────────────
@@ -291,8 +423,13 @@ class _ChatScreenState extends State<ChatScreen>
     ChatService.sendMessage(
       widget.chatId,
       text,
-      replyToId: replyTarget?.id,
-      replyToText: replyTarget?.text,
+      replyToId:         replyTarget?.id,
+      replyToText:       replyTarget?.text,
+      replyToSenderName: replyTarget == null
+          ? null
+          : (replyTarget.sent
+              ? 'You'
+              : (replyTarget.senderName ?? 'Unknown')),
     );
     Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
   }
@@ -609,15 +746,23 @@ class _ChatScreenState extends State<ChatScreen>
                           overflow: TextOverflow.ellipsis),
                       _isTyping
                           ? _TypingIndicator(anim: _typingAnim)
-                          : Row(children: [
-                              Container(
-                                  width: 7, height: 7,
-                                  decoration: const BoxDecoration(
-                                      color: Color(0xFF34C759), shape: BoxShape.circle)),
-                              const SizedBox(width: 4),
-                              const Text('online',
-                                  style: TextStyle(color: Colors.white60, fontSize: 12)),
-                            ]),
+                          : _isDirect
+                              ? Row(children: [
+                                  if (_isOnline)
+                                    Container(
+                                      width: 7, height: 7,
+                                      margin: const EdgeInsets.only(right: 4),
+                                      decoration: const BoxDecoration(
+                                          color: Color(0xFF34C759),
+                                          shape: BoxShape.circle),
+                                    ),
+                                  Text(
+                                    _isOnline ? 'online' : _lastSeenText,
+                                    style: const TextStyle(
+                                        color: Colors.white60, fontSize: 12),
+                                  ),
+                                ])
+                              : const SizedBox.shrink(),
                     ],
                   ),
                 ),
@@ -683,6 +828,7 @@ class _ChatScreenState extends State<ChatScreen>
         var messages = docs
             .where((d) => d['deleted'] != true)
             .map((d) => _Msg.fromFirestore(d, _myUid))
+            .where((m) => !_isExpired(m))
             .toList();
 
         // Filter by search query if active
@@ -707,9 +853,12 @@ class _ChatScreenState extends State<ChatScreen>
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           itemCount: messages.length,
           itemBuilder: (ctx, i) {
-            final msg = messages[i];
+            final msg  = messages[i];
+            final prev = i > 0 ? messages[i - 1] : null;
+            final showDate = prev == null ||
+                !_isSameDay(msg.createdAt, prev.createdAt);
             return Column(children: [
-              if (i == 0) _DateChip('TODAY'),
+              if (showDate) _DateChip(_dateLabel(msg.createdAt)),
               if (i == firstUnreadIdx && firstUnreadIdx != -1)
                 _UnreadDivider(count: unreadCount),
               _SwipeableBubble(
@@ -737,6 +886,10 @@ class _ChatScreenState extends State<ChatScreen>
         isStarred: _starred.contains(msg.id),
         onReply: () { Navigator.pop(context); _setReply(msg); },
         onReact: () { Navigator.pop(context); _showReactionPicker(msg); },
+        onQuickReact: (emoji) {
+          Navigator.pop(context);
+          ChatService.toggleReaction(widget.chatId, msg.id, emoji);
+        },
         onCopy: () {
           Navigator.pop(context);
           if (msg.text.isNotEmpty) {
@@ -1473,7 +1626,7 @@ class _QuotePreview extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            original.sent ? 'You' : 'Them',
+            original.senderName ?? (original.sent ? 'You' : 'Someone'),
             style: TextStyle(
               color: isSentBubble ? Colors.white : const Color(0xFF4F8AFF),
               fontWeight: FontWeight.w700,
@@ -1522,7 +1675,7 @@ class _ReplyBar extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  msg.sent ? 'You' : 'Them',
+                  msg.senderName ?? (msg.sent ? 'You' : 'Someone'),
                   style: const TextStyle(
                       color: Color(0xFF4F8AFF),
                       fontWeight: FontWeight.w700,
@@ -1856,8 +2009,9 @@ class _Msg {
   final String? senderName;
   final _Msg? replyTo;
   final Map<String, int>? reactions;
+  final DateTime createdAt;
 
-  const _Msg({
+  _Msg({
     required this.id,
     required this.text,
     required this.sent,
@@ -1873,7 +2027,8 @@ class _Msg {
     this.senderName,
     this.replyTo,
     this.reactions,
-  });
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
 
   _Msg copyWith({Map<String, int>? reactions}) => _Msg(
     id: id, text: text, sent: sent, time: time, read: read,
@@ -1881,6 +2036,7 @@ class _Msg {
     audioUrl: audioUrl, imageLabel: imageLabel, senderName: senderName,
     voiceDuration: voiceDuration, replyTo: replyTo,
     reactions: reactions ?? this.reactions,
+    createdAt: createdAt,
   );
 
   factory _Msg.fromFirestore(Map<String, dynamic> d, String myUid) {
@@ -1899,9 +2055,10 @@ class _Msg {
     _Msg? replyTo;
     if ((d['replyToText'] as String?)?.isNotEmpty == true) {
       replyTo = _Msg(
-        id: d['replyToId'] as String? ?? '',
-        text: d['replyToText'] as String,
-        sent: false, time: '', read: true,
+        id:         d['replyToId'] as String? ?? '',
+        text:       d['replyToText'] as String,
+        sent:       false, time: '', read: true,
+        senderName: d['replyToSenderName'] as String?,
       );
     }
 
@@ -1920,6 +2077,7 @@ class _Msg {
       senderName:    d['senderName'] as String?,
       replyTo:       replyTo,
       reactions:     reactions.isEmpty ? null : reactions,
+      createdAt:     ts?.toDate(),
     );
   }
 }
@@ -2024,6 +2182,7 @@ class _MsgContextMenu extends StatelessWidget {
   final bool isStarred;
   final VoidCallback onReply;
   final VoidCallback onReact;
+  final void Function(String emoji) onQuickReact;
   final VoidCallback onCopy;
   final VoidCallback onStar;
   final VoidCallback onForward;
@@ -2037,6 +2196,7 @@ class _MsgContextMenu extends StatelessWidget {
     required this.isStarred,
     required this.onReply,
     required this.onReact,
+    required this.onQuickReact,
     required this.onCopy,
     required this.onStar,
     required this.onForward,
@@ -2075,7 +2235,7 @@ class _MsgContextMenu extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: ['👍','❤️','😂','😮','😢','🙏','🔥','👏'].map((e) =>
                 GestureDetector(
-                  onTap: () { onReact(); },
+                  onTap: () { Navigator.pop(context); onQuickReact(e); },
                   child: Container(
                     width: 40, height: 40,
                     decoration: BoxDecoration(
@@ -2173,6 +2333,8 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
   bool   _mediaVisible  = true;
   String _disappearing  = 'off';
   List<Map<String, dynamic>> _mediaItems = [];
+  List<Map<String, dynamic>> _groupMembers = [];
+  List<String> _adminUids = [];
   final _localAuth = LocalAuthentication();
 
   @override
@@ -2181,6 +2343,7 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
     if (!widget.isGroup && widget.otherUid.isNotEmpty) _loadProfile();
     _loadChatMeta();
     _loadMedia();
+    if (widget.isGroup) _loadGroupInfo();
   }
 
   Future<void> _loadProfile() async {
@@ -2269,6 +2432,52 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
           .map((d) => {'imageUrl': d.data()['imageUrl'] as String? ?? ''})
           .where((m) => (m['imageUrl'] as String).isNotEmpty)
           .toList());
+    }
+  }
+
+  Future<void> _loadGroupInfo() async {
+    final chatDoc = await FirebaseFirestore.instance
+        .collection('chats').doc(widget.chatId).get();
+    if (!mounted || !chatDoc.exists) return;
+    final data = chatDoc.data()!;
+    final memberUids = List<String>.from(data['memberUids'] as List? ?? []);
+    final adminUids  = List<String>.from(data['adminUids']  as List? ?? []);
+    if (memberUids.isEmpty) return;
+    final snaps = await Future.wait(
+      memberUids.map((uid) => FirebaseFirestore.instance.collection('users').doc(uid).get()),
+    );
+    if (!mounted) return;
+    setState(() {
+      _adminUids = adminUids;
+      _groupMembers = snaps
+          .where((s) => s.exists)
+          .map((s) => {'uid': s.id, ...s.data()!})
+          .toList();
+    });
+  }
+
+  Future<void> _removeMember(String uid) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF0E1829),
+        title: const Text('Remove member', style: TextStyle(color: Colors.white)),
+        content: const Text('Remove this member from the group?',
+            style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(onPressed: () => Navigator.pop(context, true),
+              child: const Text('Remove', style: TextStyle(color: Colors.redAccent))),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).update({
+      'memberUids': FieldValue.arrayRemove([uid]),
+    });
+    if (mounted) {
+      setState(() => _groupMembers.removeWhere((m) => m['uid'] == uid));
     }
   }
 
@@ -2431,6 +2640,52 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
                     ),
             ),
             Divider(color: Colors.white.withAlpha(12), height: 28),
+
+            // ── Group members ──────────────────────────────────────────────
+            if (widget.isGroup && _groupMembers.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Row(children: [
+                  Text('${_groupMembers.length} members',
+                    style: TextStyle(color: Colors.white.withAlpha(180),
+                        fontWeight: FontWeight.w600, fontSize: 14)),
+                ]),
+              ),
+              ..._groupMembers.map((m) {
+                final uid   = m['uid'] as String? ?? '';
+                final name  = m['displayName'] as String? ?? m['phoneNumber'] as String? ?? 'Unknown';
+                final photo = m['photoUrl'] as String? ?? '';
+                final isMe  = uid == FirebaseAuth.instance.currentUser?.uid;
+                final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+                final iAmAdmin = _adminUids.contains(myUid);
+                final isAdmin  = _adminUids.contains(uid);
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                  leading: CircleAvatar(
+                    radius: 20,
+                    backgroundColor: const Color(0xFF1565C0),
+                    backgroundImage: photo.isNotEmpty ? NetworkImage(photo) : null,
+                    child: photo.isEmpty
+                        ? Text(name.substring(0, name.length.clamp(0, 1)).toUpperCase(),
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))
+                        : null,
+                  ),
+                  title: Text(isMe ? 'You' : name,
+                      style: const TextStyle(color: Colors.white, fontSize: 14)),
+                  subtitle: isAdmin
+                      ? Text('Admin', style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12))
+                      : null,
+                  trailing: (iAmAdmin && !isMe)
+                      ? IconButton(
+                          icon: const Icon(Icons.remove_circle_outline_rounded,
+                              color: Colors.redAccent, size: 20),
+                          onPressed: () => _removeMember(uid),
+                        )
+                      : null,
+                );
+              }),
+              Divider(color: Colors.white.withAlpha(12), height: 28),
+            ],
 
             // ── Encryption info ────────────────────────────────────────────
             ListTile(

@@ -52,6 +52,7 @@ class ChatService {
       'type': 'group',
       'members': allMembers,
       'name': name,
+      'adminUids': [_myUid],
       'lastMessage': '',
       'lastSenderUid': '',
       'lastTime': FieldValue.serverTimestamp(),
@@ -62,6 +63,10 @@ class ChatService {
     return ref.id;
   }
 
+  static Future<void> updateGroupName(String chatId, String name) async {
+    await _db.collection('chats').doc(chatId).update({'name': name});
+  }
+
   // ── Messaging ────────────────────────────────────────────────────────────
 
   static Future<void> sendMessage(
@@ -69,6 +74,7 @@ class ChatService {
     String text, {
     String? replyToId,
     String? replyToText,
+    String? replyToSenderName,
     String type = 'text',
     String? imageUrl,
     String? audioUrl,
@@ -95,8 +101,9 @@ class ChatService {
       'reactions':     {},
       'readBy':        [_myUid],
       'createdAt':     FieldValue.serverTimestamp(),
-      'replyToId':     replyToId,
-      'replyToText':   replyToText,
+      'replyToId':         replyToId,
+      'replyToText':       replyToText,
+      'replyToSenderName': replyToSenderName,
       'deleted':       false,
       'edited':        false,
     });
@@ -137,13 +144,14 @@ class ChatService {
 
   // ── Image upload + send ──────────────────────────────────────────────────
 
-  static Future<void> sendImage(String chatId, File imageFile) async {
+  static Future<void> sendImage(String chatId, File imageFile, {String caption = ''}) async {
     final ext  = imageFile.path.split('.').last;
     final path = 'chat_images/$chatId/${DateTime.now().millisecondsSinceEpoch}.$ext';
     final ref  = _storage.ref().child(path);
     await ref.putFile(imageFile);
-    final url = await ref.getDownloadURL();
-    await sendMessage(chatId, '📷 Photo', type: 'image', imageUrl: url);
+    final url  = await ref.getDownloadURL();
+    await sendMessage(chatId, caption.isNotEmpty ? caption : '📷 Photo',
+        type: 'image', imageUrl: url);
   }
 
   // ── Reactions / delete ───────────────────────────────────────────────────
