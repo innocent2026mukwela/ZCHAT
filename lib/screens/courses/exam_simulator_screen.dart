@@ -134,6 +134,7 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
   }
 
   Widget _instructions() {
+    final isLoading = _questions == null && _loadError == null;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
       children: [
@@ -151,13 +152,44 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
               _Rule(Icons.timer_outlined, 'Time limit: 1h 30m'),
               _Rule(Icons.save_outlined, 'Answers auto-save locally in this prototype'),
               _Rule(Icons.analytics_outlined, 'Results identify weak topics for a study path'),
+              if (isLoading) ...[
+                const SizedBox(height: 16),
+                Row(children: [
+                  const SizedBox(width: 14, height: 14,
+                      child: CircularProgressIndicator(color: Color(0xFFB794F4), strokeWidth: 2)),
+                  const SizedBox(width: 10),
+                  Text('Generating questions…', style: TextStyle(color: Colors.white.withAlpha(155), fontSize: 13)),
+                ]),
+              ],
+              if (_loadError != null) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withAlpha(22),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.red.withAlpha(70)),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_loadError!, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
+                    TextButton(
+                      onPressed: _loadQuestions,
+                      style: TextButton.styleFrom(foregroundColor: Colors.redAccent, padding: const EdgeInsets.symmetric(horizontal: 8)),
+                      child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.w700)),
+                    ),
+                  ]),
+                ),
+              ],
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _start,
+                  onPressed: _questions != null ? _start : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF7C3AED),
+                    disabledBackgroundColor: const Color(0xFF7C3AED).withAlpha(80),
                     minimumSize: const Size(double.infinity, 52),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),

@@ -9,7 +9,6 @@ const String onboardingPath  = 'assets/images/onboarding.png';
 // Route names
 const String routeSplash     = '/';
 const String routeLogin      = '/login';
-const String routeRegister   = '/register';
 const String routeHome       = '/home';
 const String routeChat       = '/chat';
 const String routeCourses    = '/courses';

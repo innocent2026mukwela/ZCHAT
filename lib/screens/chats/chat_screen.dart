@@ -40,6 +40,7 @@ class _ChatScreenState extends State<ChatScreen>
   final _scroll = ScrollController();
   bool _hasText = false;
   bool _summaryDismissed = false;
+  int  _unreadCount = 0;
   bool _showEmojiKeyboard = false;
 
   // Swipe-to-reply
@@ -520,8 +521,14 @@ class _ChatScreenState extends State<ChatScreen>
         widget.chatId, '🎤 Voice message ($dur)',
         type: 'voice', audioUrl: url, voiceDuration: dur,
       );
-    } catch (_) {
-      // upload failed silently
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Failed to send voice message. Check your connection.'),
+          backgroundColor: Colors.redAccent,
+          duration: Duration(seconds: 3),
+        ));
+      }
     }
     Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
   }
@@ -678,7 +685,7 @@ class _ChatScreenState extends State<ChatScreen>
             const SizedBox(height: kToolbarHeight + 44),
             if (_showSummaryBanner)
               _SummaryBanner(
-                count: 127,
+                count: _unreadCount,
                 onTap: _showSmartSummary,
                 onDismiss: () => setState(() => _summaryDismissed = true),
               ),
@@ -847,6 +854,10 @@ class _ChatScreenState extends State<ChatScreen>
         final unreadCount = firstUnreadIdx == -1
             ? 0
             : messages.skip(firstUnreadIdx).where((m) => !m.read && !m.sent).length;
+        if (unreadCount != _unreadCount) {
+          WidgetsBinding.instance.addPostFrameCallback(
+              (_) { if (mounted) setState(() => _unreadCount = unreadCount); });
+        }
 
         return ListView.builder(
           controller: _scroll,

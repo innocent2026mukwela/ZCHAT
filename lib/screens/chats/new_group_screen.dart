@@ -1,10 +1,13 @@
+import 'dart:io';
 import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../services/chat_service.dart';
 import '../../utils/glass.dart';
@@ -30,6 +33,7 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
   bool _loading = true;
 
   final _nameCtrl = TextEditingController();
+  File? _groupAvatar;
   bool _creating = false;
 
   String get _myUid => FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -135,14 +139,31 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
     });
   }
 
+  Future<void> _pickAvatar() async {
+    final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery, imageQuality: 75, maxWidth: 512);
+    if (picked != null && mounted) {
+      setState(() => _groupAvatar = File(picked.path));
+    }
+  }
+
   Future<void> _createGroup() async {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty || _selectedUids.isEmpty) return;
     setState(() => _creating = true);
     try {
-      final chatId = await ChatService.createGroupChat(name, _selectedUids.toList());
+      String photoUrl = '';
+      if (_groupAvatar != null) {
+        final ref = FirebaseStorage.instance
+            .ref('group_avatars/${DateTime.now().millisecondsSinceEpoch}.jpg');
+        await ref.putFile(_groupAvatar!);
+        photoUrl = await ref.getDownloadURL();
+      }
+      final chatId = await ChatService.createGroupChat(
+          name, _selectedUids.toList(), photoUrl: photoUrl);
       if (mounted) {
-        context.pushReplacement('/chats/$chatId?name=${Uri.encodeComponent(name)}');
+        context.pushReplacement(
+            '/chats/$chatId?name=${Uri.encodeComponent(name)}');
       }
     } catch (e) {
       if (mounted) setState(() => _creating = false);
@@ -351,16 +372,35 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
   Widget _buildNameStep() {
     return Column(children: [
       const SizedBox(height: kToolbarHeight + 60),
-      // Group avatar placeholder
+      // Group avatar
       Center(
-        child: Container(
-          width: 90, height: 90,
-          decoration: BoxDecoration(
-            color: const Color(0xFF2563EB).withAlpha(40),
-            shape: BoxShape.circle,
-            border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80), width: 2),
+        child: GestureDetector(
+          onTap: _pickAvatar,
+          child: Stack(
+            alignment: Alignment.bottomRight,
+            children: [
+              Container(
+                width: 90, height: 90,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB).withAlpha(40),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80), width: 2),
+                  image: _groupAvatar != null
+                      ? DecorationImage(image: FileImage(_groupAvatar!), fit: BoxFit.cover)
+                      : null,
+                ),
+                child: _groupAvatar == null
+                    ? const Icon(Icons.group_rounded, color: Color(0xFF4F8AFF), size: 44)
+                    : null,
+              ),
+              Container(
+                width: 26, height: 26,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF2563EB), shape: BoxShape.circle),
+                child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 14),
+              ),
+            ],
           ),
-          child: const Icon(Icons.group_rounded, color: Color(0xFF4F8AFF), size: 44),
         ),
       ),
       const SizedBox(height: 32),

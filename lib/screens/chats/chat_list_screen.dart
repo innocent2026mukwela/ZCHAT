@@ -443,20 +443,25 @@ class _ChatTile extends StatelessWidget {
     this.isLocked = false,
   });
 
-  void _showOptions(BuildContext context) {
+  Future<void> _showOptions(BuildContext context) async {
     HapticFeedback.mediumImpact();
     final chatId   = chat['id'] as String? ?? '';
     final isPinned = ChatService.isPinned(chat);
     final isArch   = ChatService.isArchived(chat);
     final unread   = ChatService.getUnreadCount(chat);
     final name     = ChatService.getChatDisplayName(chat);
+    final prefs    = await SharedPreferences.getInstance();
+    final locked   = (prefs.getStringList('locked_chats') ?? []).toSet();
+    final isLocked = locked.contains(chatId);
+
+    if (!context.mounted) return;
 
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF0E1829),
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-      builder: (_) => SafeArea(
+      builder: (sheetCtx) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Container(
             margin: const EdgeInsets.only(top: 10, bottom: 8),
@@ -479,7 +484,7 @@ class _ChatTile extends StatelessWidget {
             title: Text(isPinned ? 'Unpin chat' : 'Pin chat',
                 style: const TextStyle(color: Colors.white)),
             onTap: () {
-              Navigator.pop(context);
+              Navigator.pop(sheetCtx);
               ChatService.togglePin(chatId, isPinned);
               onAction();
             },
@@ -491,7 +496,7 @@ class _ChatTile extends StatelessWidget {
             title: Text(isArch ? 'Unarchive' : 'Archive',
                 style: const TextStyle(color: Colors.white)),
             onTap: () {
-              Navigator.pop(context);
+              Navigator.pop(sheetCtx);
               ChatService.toggleArchive(chatId, isArch);
               onAction();
             },
@@ -505,12 +510,32 @@ class _ChatTile extends StatelessWidget {
             title: Text(unread > 0 ? 'Mark as read' : 'Mark as unread',
                 style: const TextStyle(color: Colors.white)),
             onTap: () {
-              Navigator.pop(context);
+              Navigator.pop(sheetCtx);
               if (unread > 0) {
                 ChatService.markRead(chatId);
               } else {
                 ChatService.markUnread(chatId);
               }
+              onAction();
+            },
+          ),
+          // Lock / Unlock
+          ListTile(
+            leading: Icon(
+              isLocked ? Icons.lock_open_outlined : Icons.lock_outline_rounded,
+              color: isLocked ? const Color(0xFF7C3AED) : Colors.white70,
+            ),
+            title: Text(isLocked ? 'Unlock chat' : 'Lock chat',
+                style: const TextStyle(color: Colors.white)),
+            onTap: () async {
+              Navigator.pop(sheetCtx);
+              final updated = (prefs.getStringList('locked_chats') ?? []).toSet();
+              if (isLocked) {
+                updated.remove(chatId);
+              } else {
+                updated.add(chatId);
+              }
+              await prefs.setStringList('locked_chats', updated.toList());
               onAction();
             },
           ),
@@ -520,7 +545,7 @@ class _ChatTile extends StatelessWidget {
             title: const Text('Delete chat',
                 style: TextStyle(color: Colors.redAccent)),
             onTap: () {
-              Navigator.pop(context);
+              Navigator.pop(sheetCtx);
               ChatService.deleteChat(chatId);
               onAction();
             },

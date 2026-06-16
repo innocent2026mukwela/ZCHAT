@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 import '../../utils/glass.dart';
 
 class ClassroomScreen extends StatelessWidget {
@@ -113,9 +114,21 @@ class _ClassroomBody extends StatelessWidget {
                           Text('Students notified instantly', style: TextStyle(color: Colors.white60, fontSize: 12)),
                         ])),
                         ElevatedButton(
-                          onPressed: () {
-                            final roomId = '${courseId}_${DateTime.now().millisecondsSinceEpoch ~/ 600000}';
-                            context.push('/classroom/$courseId/live/$roomId');
+                          onPressed: () async {
+                            final roomId = const Uuid().v4();
+                            await FirebaseFirestore.instance
+                                .collection('classrooms')
+                                .doc(courseId)
+                                .collection('sessions')
+                                .add({
+                              'title': 'Live Session',
+                              'roomId': roomId,
+                              'status': 'live',
+                              'scheduledAt': FieldValue.serverTimestamp(),
+                            });
+                            if (context.mounted) {
+                              context.push('/classroom/$courseId/live/$roomId');
+                            }
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF2563EB),

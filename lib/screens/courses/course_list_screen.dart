@@ -22,7 +22,7 @@ Color _colorFor(String subject) {
 // ── Service helper — reads unique subjects from timetable ─────────────────────
 Stream<List<_Course>> _timetableCoursesStream() {
   final uid = FirebaseAuth.instance.currentUser?.uid;
-  if (uid == null) return const Stream.empty();
+  if (uid == null) return Stream.error('Not logged in');
 
   return FirebaseFirestore.instance
       .collection('users')
@@ -81,6 +81,10 @@ class _CourseListScreenState extends State<CourseListScreen> {
                 builder: (ctx, snap) {
                   if (snap.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF)));
+                  }
+                  if (snap.hasError) {
+                    return Center(child: Text('Could not load courses',
+                        style: TextStyle(color: Colors.white.withAlpha(120))));
                   }
                   final all = snap.data ?? [];
                   if (all.isEmpty) return _buildEmpty(context);

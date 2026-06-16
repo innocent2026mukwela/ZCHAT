@@ -108,8 +108,9 @@ class _GlassHomeAppBar extends StatelessWidget {
                         icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
                         color: const Color(0xFF0A1A4A),
                         onSelected: (v) {
-                          if (v == 'profile') context.push('/profile');
+                          if (v == 'profile')  context.push('/profile');
                           if (v == 'new_group') context.push('/new-group');
+                          if (v == 'starred')  context.push('/starred');
                         },
                         itemBuilder: (_) => [
                           PopupMenuItem(value: 'new_group',    child: Text('New group',      style: TextStyle(color: Colors.white.withAlpha(220)))),
@@ -180,11 +181,11 @@ class _HomeFabState extends State<_HomeFab> {
   Widget build(BuildContext context) {
     final tab = DefaultTabController.of(context).index;
     final icons  = [Icons.edit_rounded, Icons.camera_alt_rounded, Icons.add_call];
-    final routes = ['/new-chat', '', ''];
+    final routes = ['/new-chat', '/status', '/new-chat'];
     return FloatingActionButton(
       backgroundColor: const Color(0xFF2563EB),
       elevation: 8,
-      onPressed: () { if (routes[tab].isNotEmpty) context.push(routes[tab]); },
+      onPressed: () => context.push(routes[tab]),
       child: Icon(icons[tab], color: Colors.white),
     );
   }
@@ -323,6 +324,8 @@ class _ChatsTabState extends State<_ChatsTab> {
                   final msg      = chat['lastMessage'] as String? ?? '';
                   final unread   = ChatService.getUnreadCount(chat);
                   final isGroup  = chat['type'] == 'group';
+                  final isPinned = ChatService.isPinned(chat);
+                  final isMuted  = ChatService.isMuted(chat);
                   final ts       = chat['lastTime'] as Timestamp?;
                   final time     = ChatService.formatTime(ts);
 
@@ -334,6 +337,8 @@ class _ChatsTabState extends State<_ChatsTab> {
                     time: time,
                     unread: unread,
                     isGroup: isGroup,
+                    isPinned: isPinned,
+                    isMuted: isMuted,
                     index: i,
                     onArchive: () => _archiveChat(chatId),
                     searchQuery: _query,
@@ -355,6 +360,8 @@ class _ChatTile extends StatelessWidget {
   final String time;
   final int unread;
   final bool isGroup;
+  final bool isPinned;
+  final bool isMuted;
   final int index;
   final VoidCallback onArchive;
   final String searchQuery;
@@ -367,6 +374,8 @@ class _ChatTile extends StatelessWidget {
     required this.time,
     required this.unread,
     required this.isGroup,
+    required this.isPinned,
+    required this.isMuted,
     required this.index,
     required this.onArchive,
     required this.searchQuery,
@@ -458,7 +467,14 @@ class _ChatTile extends StatelessWidget {
       context: context,
       backgroundColor: const Color(0xFF0A1A4A),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => _ChatOptionsSheet(name: name, onArchive: onArchive),
+      builder: (_) => _ChatOptionsSheet(
+        chatId: chatId,
+        name: name,
+        isPinned: isPinned,
+        isMuted: isMuted,
+        unread: unread,
+        onArchive: onArchive,
+      ),
     );
   }
 }
@@ -500,9 +516,21 @@ class _HighlightText extends StatelessWidget {
 }
 
 class _ChatOptionsSheet extends StatelessWidget {
+  final String chatId;
   final String name;
+  final bool isPinned;
+  final bool isMuted;
+  final int unread;
   final VoidCallback onArchive;
-  const _ChatOptionsSheet({required this.name, required this.onArchive});
+
+  const _ChatOptionsSheet({
+    required this.chatId,
+    required this.name,
+    required this.isPinned,
+    required this.isMuted,
+    required this.unread,
+    required this.onArchive,
+  });
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -510,27 +538,35 @@ class _ChatOptionsSheet extends StatelessWidget {
     child: Column(mainAxisSize: MainAxisSize.min, children: [
       Container(width: 40, height: 4,
         decoration: BoxDecoration(color: Colors.white.withAlpha(40), borderRadius: BorderRadius.circular(2))),
-      const SizedBox(height: 8),
+      const SizedBox(height: 4),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Text(name, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+      ),
+      Divider(color: Colors.white.withAlpha(15), height: 1),
       ListTile(
-        leading: const Icon(Icons.push_pin_outlined, color: Colors.white70),
-        title: const Text('Pin chat', style: TextStyle(color: Colors.white)),
-        onTap: () => Navigator.pop(context)),
+        leading: Icon(isPinned ? Icons.push_pin_rounded : Icons.push_pin_outlined, color: Colors.white70),
+        title: Text(isPinned ? 'Unpin chat' : 'Pin chat', style: const TextStyle(color: Colors.white)),
+        onTap: () { Navigator.pop(context); ChatService.togglePin(chatId, isPinned); }),
       ListTile(
-        leading: const Icon(Icons.notifications_off_outlined, color: Colors.white70),
-        title: const Text('Mute notifications', style: TextStyle(color: Colors.white)),
-        onTap: () => Navigator.pop(context)),
+        leading: Icon(isMuted ? Icons.notifications_outlined : Icons.notifications_off_outlined, color: Colors.white70),
+        title: Text(isMuted ? 'Unmute' : 'Mute notifications', style: const TextStyle(color: Colors.white)),
+        onTap: () { Navigator.pop(context); ChatService.muteChat(chatId, !isMuted); }),
       ListTile(
         leading: const Icon(Icons.archive_outlined, color: Colors.white70),
         title: const Text('Archive', style: TextStyle(color: Colors.white)),
         onTap: () { Navigator.pop(context); onArchive(); }),
       ListTile(
-        leading: const Icon(Icons.mark_chat_read_outlined, color: Colors.white70),
-        title: const Text('Mark as read', style: TextStyle(color: Colors.white)),
-        onTap: () => Navigator.pop(context)),
+        leading: Icon(unread > 0 ? Icons.mark_chat_read_outlined : Icons.mark_chat_unread_outlined, color: Colors.white70),
+        title: Text(unread > 0 ? 'Mark as read' : 'Mark as unread', style: const TextStyle(color: Colors.white)),
+        onTap: () {
+          Navigator.pop(context);
+          if (unread > 0) { ChatService.markRead(chatId); } else { ChatService.markUnread(chatId); }
+        }),
       ListTile(
         leading: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
         title: const Text('Delete chat', style: TextStyle(color: Colors.redAccent)),
-        onTap: () => Navigator.pop(context)),
+        onTap: () { Navigator.pop(context); ChatService.deleteChat(chatId); }),
     ]),
   );
 }

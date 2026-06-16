@@ -153,12 +153,22 @@ class _CallsScreenState extends State<CallsScreen>
   }
 
   Future<void> _directCall(String uid, String name, bool video) async {
-    final roomId = await CallService.initiateCall(
-      calleeUid: uid, calleeName: name,
-      type: video ? CallType.video : CallType.voice,
-    );
-    if (!mounted) return;
-    _launchZego(context, roomId: roomId, video: video);
+    try {
+      final roomId = await CallService.initiateCall(
+        calleeUid: uid, calleeName: name,
+        type: video ? CallType.video : CallType.voice,
+      );
+      if (!mounted) return;
+      _launchZego(context, roomId: roomId, video: video);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Could not start call: ${e.toString().replaceFirst("Exception: ", "")}'),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ));
+    }
   }
 
   Future<void> _groupCall(
@@ -166,12 +176,22 @@ class _CallsScreenState extends State<CallsScreen>
     Map<String, String> names,
     bool video,
   ) async {
-    final roomId = await CallService.initiateGroupCall(
-      calleeUids: uids, calleeNames: names,
-      type: video ? CallType.video : CallType.voice,
-    );
-    if (!mounted) return;
-    _launchZego(context, roomId: roomId, video: video, isGroup: true);
+    try {
+      final roomId = await CallService.initiateGroupCall(
+        calleeUids: uids, calleeNames: names,
+        type: video ? CallType.video : CallType.voice,
+      );
+      if (!mounted) return;
+      _launchZego(context, roomId: roomId, video: video, isGroup: true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Could not start group call: ${e.toString().replaceFirst("Exception: ", "")}'),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ));
+    }
   }
 
   void _toggleSearch() {

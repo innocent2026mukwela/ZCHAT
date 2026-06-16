@@ -33,12 +33,6 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
     }
   }
 
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature is coming soon 🚀'), behavior: SnackBarBehavior.floating),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return GradientScaffold(
@@ -163,15 +157,15 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
       _Tool('Course Summaries', 'AI-generated study cards', Icons.menu_book_rounded, const Color(0xFF0EA5E9),
           () => context.push('/ai/summaries/General')),
       _Tool('Past Paper Analyzer', 'Spot exam patterns', Icons.description_rounded, const Color(0xFF16A34A),
-          () => _comingSoon('Past Paper Analyzer')),
+          () => context.push('/courses')),
       _Tool('Exam Mode', 'Timed practice exams', Icons.timer_rounded, const Color(0xFFF59E0B),
-          () => _comingSoon('Exam Mode')),
+          () => context.push('/exam-simulator/General')),
       _Tool('Study Planner', 'AI-personalised plans', Icons.event_note_rounded, const Color(0xFFEC4899),
-          () => _comingSoon('AI Study Planner')),
+          () => context.push('/adaptive-plan/General')),
       _Tool('Group Summarizer', 'Catch up on group chats', Icons.groups_rounded, const Color(0xFF14B8A6),
-          () => _comingSoon('Group Summarizer')),
+          () => context.push('/ai/group-summarizer')),
       _Tool('Study Insights', 'Personalised recommendations', Icons.insights_rounded, const Color(0xFF8B5CF6),
-          () => _comingSoon('Study Insights')),
+          () => context.push('/ai/insights')),
     ];
 
     return GridView.builder(

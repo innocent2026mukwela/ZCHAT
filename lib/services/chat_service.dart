@@ -44,14 +44,20 @@ class ChatService {
     return chatId;
   }
 
-  static Future<String> createGroupChat(String name, List<String> memberUids) async {
+  static Future<String> createGroupChat(
+    String name,
+    List<String> memberUids, {
+    String photoUrl = '',
+  }) async {
     final ref = _db.collection('chats').doc();
     final allMembers = [...memberUids, _myUid];
     await ref.set({
       'id': ref.id,
       'type': 'group',
       'members': allMembers,
+      'memberUids': allMembers,
       'name': name,
+      'photoUrl': photoUrl,
       'adminUids': [_myUid],
       'lastMessage': '',
       'lastSenderUid': '',

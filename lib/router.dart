@@ -8,6 +8,7 @@ import 'screens/chats/chat_list_screen.dart';
 import 'screens/chats/chat_screen.dart';
 import 'screens/chats/new_chat_screen.dart';
 import 'screens/chats/new_group_screen.dart';
+import 'screens/chats/starred_messages_screen.dart';
 import 'screens/status/status_screen.dart';
 import 'screens/calls/calls_screen.dart';
 import 'screens/courses/course_list_screen.dart';
@@ -23,6 +24,8 @@ import 'screens/ai_assistant/ai_home_screen.dart';
 import 'screens/ai_assistant/ai_chat_screen.dart';
 import 'screens/ai_assistant/quiz_screen.dart';
 import 'screens/ai_assistant/summary_screen.dart';
+import 'screens/ai_assistant/group_summarizer_screen.dart';
+import 'screens/ai_assistant/study_insights_screen.dart';
 import 'screens/planner/planner_screen.dart';
 import 'screens/profile/profile_screen.dart';
 import 'screens/lecturer/lecturer_screens.dart';
@@ -49,6 +52,7 @@ final appRouter = GoRouter(
     GoRoute(path: '/chats',      builder: (c, s) => const ChatListScreen()),
     GoRoute(path: '/new-chat',   builder: (c, s) => const NewChatScreen()),
     GoRoute(path: '/new-group',  builder: (c, s) => const NewGroupScreen()),
+    GoRoute(path: '/starred',    builder: (c, s) => const StarredMessagesScreen()),
     GoRoute(
       path: '/chats/:chatId',
       builder: (c, s) => ChatScreen(
@@ -116,6 +120,8 @@ final appRouter = GoRouter(
     GoRoute(path: '/ai/chat',                   builder: (c, s) => AiChatScreen(conversationId: s.extra as String?)),
     GoRoute(path: '/ai/quiz/:courseId',         builder: (c, s) => QuizScreen(courseId: s.pathParameters['courseId']!)),
     GoRoute(path: '/ai/summaries/:courseId',    builder: (c, s) => SummaryScreen(courseId: s.pathParameters['courseId']!)),
+    GoRoute(path: '/ai/group-summarizer',       builder: (c, s) => const GroupSummarizerScreen()),
+    GoRoute(path: '/ai/insights',               builder: (c, s) => const StudyInsightsScreen()),
 
     // Planner & Profile
     GoRoute(path: '/planner', builder: (c, s) => const PlannerScreen()),

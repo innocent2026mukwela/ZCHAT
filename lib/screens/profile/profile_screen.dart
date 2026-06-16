@@ -253,6 +253,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 : null,
             onTap: () async {
               Navigator.pop(context);
+              setState(() {
+                switch (field) {
+                  case 'privacyLastSeen': _privacyLastSeen = opt;
+                  case 'privacyPhoto':    _privacyPhoto    = opt;
+                  case 'privacyGroups':   _privacyGroups   = opt;
+                  case 'statusPrivacy':   _statusPrivacy   = opt;
+                }
+              });
               await _save({field: opt});
             },
           )),

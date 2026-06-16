@@ -14,14 +14,23 @@ class ProfileSetupScreen extends StatefulWidget {
 class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   final _formKey     = GlobalKey<FormState>();
   final _nameCtrl    = TextEditingController();
-  final _universityCtrl = TextEditingController(text: 'University of Zambia');
+  static const _universities = [
+    'University of Zambia',
+    'Copperbelt University',
+    'Mulungushi University',
+    'Cavendish University Zambia',
+    'Zambia Open University',
+    'University of Lusaka',
+    'Northrise University',
+    'Other',
+  ];
+  String _university = 'University of Zambia';
   final _studentCtrl = TextEditingController();
   final _schoolCtrl = TextEditingController();
   final _programCtrl = TextEditingController();
   final _staffCtrl = TextEditingController();
   final _departmentCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
-  final _codeCtrl = TextEditingController();
   String _role       = 'student';
   bool _loading      = false;
   String? _error;
@@ -29,29 +38,30 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   @override
   void dispose() {
     _nameCtrl.dispose();
-    _universityCtrl.dispose();
     _studentCtrl.dispose();
     _schoolCtrl.dispose();
     _programCtrl.dispose();
     _staffCtrl.dispose();
     _departmentCtrl.dispose();
     _emailCtrl.dispose();
-    _codeCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_role == 'lecturer' && _codeCtrl.text.trim().toUpperCase() != 'UNZA-LECTURER') {
-      setState(() => _error = 'Use the prototype lecturer code: UNZA-LECTURER');
-      return;
+    if (_role == 'lecturer') {
+      final email = _emailCtrl.text.trim().toLowerCase();
+      if (!email.endsWith('@unza.zm') && !email.endsWith('@unza.ac.zm')) {
+        setState(() => _error = 'Lecturer email must be a UNZA institutional address (@unza.zm)');
+        return;
+      }
     }
     setState(() { _loading = true; _error = null; });
     try {
       await AuthService.completeProfile(
         fullName: _nameCtrl.text.trim(),
         role: _role,
-        university: _universityCtrl.text.trim(),
+        university: _university,
         studentNumber: _role == 'student' ? _studentCtrl.text.trim() : null,
         school: _role == 'student' ? _schoolCtrl.text.trim() : null,
         program: _role == 'student' ? _programCtrl.text.trim() : null,
@@ -175,12 +185,51 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                       ).animate(delay: 220.ms).fadeIn().slideY(begin: 0.1, end: 0),
 
                       const SizedBox(height: 12),
-                      _GlassInput(
-                        controller: _universityCtrl,
-                        hintText: 'University',
-                        icon: Icons.account_balance_rounded,
-                        textCapitalization: TextCapitalization.words,
-                        validator: (v) => (v == null || v.trim().isEmpty) ? 'University is required' : null,
+                      GestureDetector(
+                        onTap: () async {
+                          final picked = await showModalBottomSheet<String>(
+                            context: context,
+                            backgroundColor: const Color(0xFF0E1829),
+                            shape: const RoundedRectangleBorder(
+                                borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+                            builder: (_) => SafeArea(
+                              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                const SizedBox(height: 12),
+                                Container(width: 40, height: 4,
+                                  decoration: BoxDecoration(color: Colors.white.withAlpha(40), borderRadius: BorderRadius.circular(2))),
+                                const SizedBox(height: 12),
+                                const Text('Select University',
+                                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                                const SizedBox(height: 8),
+                                ..._universities.map((u) => ListTile(
+                                  title: Text(u, style: TextStyle(
+                                    color: u == _university ? const Color(0xFF4F8AFF) : Colors.white)),
+                                  trailing: u == _university
+                                      ? const Icon(Icons.check_rounded, color: Color(0xFF4F8AFF))
+                                      : null,
+                                  onTap: () => Navigator.pop(context, u),
+                                )),
+                                const SizedBox(height: 8),
+                              ]),
+                            ),
+                          );
+                          if (picked != null) setState(() => _university = picked);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withAlpha(15),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: Colors.white.withAlpha(35)),
+                          ),
+                          child: Row(children: [
+                            const Icon(Icons.account_balance_rounded, color: Color(0xFF4F8AFF), size: 20),
+                            const SizedBox(width: 12),
+                            Expanded(child: Text(_university,
+                                style: const TextStyle(color: Colors.white, fontSize: 15))),
+                            Icon(Icons.arrow_drop_down_rounded, color: Colors.white.withAlpha(140)),
+                          ]),
+                        ),
                       ).animate(delay: 240.ms).fadeIn().slideY(begin: 0.1, end: 0),
 
                       if (_role == 'student') ...[
@@ -239,21 +288,6 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                           },
                         ).animate(delay: 300.ms).fadeIn().slideY(begin: 0.1, end: 0),
                         const SizedBox(height: 12),
-                        _GlassInput(
-                          controller: _codeCtrl,
-                          hintText: 'Verification code',
-                          icon: Icons.verified_user_outlined,
-                          textCapitalization: TextCapitalization.characters,
-                          validator: (v) => (v == null || v.trim().isEmpty) ? 'Verification code is required' : null,
-                        ).animate(delay: 320.ms).fadeIn().slideY(begin: 0.1, end: 0),
-                        const SizedBox(height: 10),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Prototype code: UNZA-LECTURER',
-                            style: TextStyle(color: Colors.white.withAlpha(130), fontSize: 12),
-                          ),
-                        ).animate(delay: 340.ms).fadeIn(),
                       ],
 
                       if (_error != null) ...[
