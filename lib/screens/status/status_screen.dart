@@ -168,9 +168,13 @@ class _StatusScreenState extends State<StatusScreen> {
           ListTile(
             leading: const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white70),
             title: const Text('Message', style: TextStyle(color: Colors.white)),
-            onTap: () {
+            onTap: () async {
               Navigator.pop(context);
-              context.push('/chats/${Uri.encodeComponent(uid)}?name=${Uri.encodeComponent(name)}');
+              final router = GoRouter.of(context);
+              try {
+                final chatId = await ChatService.getOrCreateChat(uid);
+                router.push('/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(name)}');
+              } catch (_) {}
             },
           ),
           ListTile(

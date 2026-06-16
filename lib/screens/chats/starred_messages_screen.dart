@@ -64,11 +64,12 @@ class StarredMessagesScreen extends StatelessWidget {
             separatorBuilder: (_, _) =>
                 Divider(color: Colors.white.withAlpha(12), height: 1),
             itemBuilder: (ctx, i) {
-              final data    = docs[i].data();
-              final chatId  = data['chatId']   as String? ?? '';
-              final text    = data['text']     as String? ?? '';
-              final ts      = data['starredAt'] as Timestamp?;
-              final msgId   = data['msgId']    as String? ?? '';
+              final data     = docs[i].data();
+              final chatId   = data['chatId']   as String? ?? '';
+              final text     = data['text']     as String? ?? '';
+              final ts       = data['starredAt'] as Timestamp?;
+              final msgId    = data['msgId']    as String? ?? '';
+              final chatName = data['chatName'] as String? ?? 'Chat';
 
               return ListTile(
                 contentPadding:
@@ -99,8 +100,7 @@ class StarredMessagesScreen extends StatelessWidget {
                 ),
                 onTap: () {
                   if (chatId.isNotEmpty) {
-                    context.push(
-                        '/chats/${Uri.encodeComponent(chatId)}');
+                    context.push('/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(chatName)}');
                   }
                 },
               );

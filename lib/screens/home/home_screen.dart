@@ -890,7 +890,7 @@ class _CallsTab extends StatelessWidget {
                     if (otherUid.isEmpty) return;
                     final chatId = await ChatService.getOrCreateChat(otherUid);
                     if (ctx2.mounted) {
-                      context.push('/chats/$chatId?name=${Uri.encodeComponent(name)}');
+                      context.push('/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(name)}');
                     }
                   },
                 ),

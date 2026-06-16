@@ -268,10 +268,10 @@ class ChatService {
 
   // ── Starred messages ──────────────────────────────────────────────────────
 
-  static Future<void> starMessage(String chatId, String msgId, String text) async {
+  static Future<void> starMessage(String chatId, String msgId, String text, {String chatName = ''}) async {
     await _db.collection('users').doc(_myUid).collection('starred').doc(msgId).set({
       'chatId': chatId, 'msgId': msgId,
-      'text': text, 'starredAt': FieldValue.serverTimestamp(),
+      'text': text, 'chatName': chatName, 'starredAt': FieldValue.serverTimestamp(),
     });
   }
 

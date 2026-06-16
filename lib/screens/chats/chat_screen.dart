@@ -928,7 +928,7 @@ class _ChatScreenState extends State<ChatScreen>
           if (_starred.contains(msg.id)) {
             ChatService.unstarMessage(msg.id);
           } else {
-            ChatService.starMessage(widget.chatId, msg.id, msg.text);
+            ChatService.starMessage(widget.chatId, msg.id, msg.text, chatName: widget.chatName);
           }
         },
         onForward: () {
@@ -2682,7 +2682,7 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
               ),
               ..._groupMembers.map((m) {
                 final uid   = m['uid'] as String? ?? '';
-                final name  = m['displayName'] as String? ?? m['phoneNumber'] as String? ?? 'Unknown';
+                final name  = m['fullName'] as String? ?? m['displayName'] as String? ?? m['phoneNumber'] as String? ?? 'Unknown';
                 final photo = m['photoUrl'] as String? ?? '';
                 final isMe  = uid == FirebaseAuth.instance.currentUser?.uid;
                 final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
