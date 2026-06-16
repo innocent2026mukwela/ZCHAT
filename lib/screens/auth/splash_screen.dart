@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../utils/glass.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -43,6 +44,9 @@ class _SplashScreenState extends State<SplashScreen>
       context.go('/login');
       return;
     }
+
+    // Request contacts permission early so New Chat loads instantly on first open.
+    await Permission.contacts.request();
 
     // Logged in → check if profile is complete
     final doc = await FirebaseFirestore.instance

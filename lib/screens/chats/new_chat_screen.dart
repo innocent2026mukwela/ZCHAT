@@ -24,6 +24,10 @@ class _NewChatScreenState extends State<NewChatScreen> {
     Color(0xFFAD1457), Color(0xFFE65100), Color(0xFF00695C),
   ];
 
+  // Static cache — survives widget rebuilds and screen pops/pushes.
+  static List<_ContactEntry>? _cachedContacts;
+  static Map<String, _ZchatUser> _cachedZchatMap = {};
+
   List<_ContactEntry> _all      = [];
   List<_ContactEntry> _filtered = [];
 
@@ -39,17 +43,29 @@ class _NewChatScreenState extends State<NewChatScreen> {
   @override
   void initState() {
     super.initState();
-    _loadContacts();
+    if (_cachedContacts != null) {
+      // Show cached data immediately — no spinner.
+      _all      = _cachedContacts!;
+      _filtered = _cachedContacts!;
+      _zchatMap = _cachedZchatMap;
+      _loading  = false;
+      // Silently refresh in background.
+      _loadContacts(silent: true);
+    } else {
+      _loadContacts();
+    }
   }
 
   // ── Load ALL phone contacts ───────────────────────────────────────────────
 
-  Future<void> _loadContacts() async {
-    setState(() { _loading = true; _error = ''; });
+  Future<void> _loadContacts({bool silent = false}) async {
+    if (!silent) setState(() { _loading = true; _error = ''; });
 
-    final status = await Permission.contacts.request();
+    final status = silent
+        ? await Permission.contacts.status
+        : await Permission.contacts.request();
     if (!status.isGranted) {
-      if (mounted) {
+      if (!silent && mounted) {
         setState(() {
           _loading = false;
           _error = 'Contacts permission denied.\nEnable Contacts access for ZCHAT in Settings.';
@@ -81,11 +97,17 @@ class _NewChatScreenState extends State<NewChatScreen> {
     }
     entries.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
 
+    _cachedContacts = entries;
+
     if (mounted) {
       setState(() {
         _all      = entries;
-        _filtered = entries;
-        _loading  = false;
+        _filtered = _search.isEmpty
+            ? entries
+            : entries.where((e) =>
+                e.displayName.toLowerCase().contains(_search.toLowerCase()) ||
+                e.e164.contains(_search) || e.raw.contains(_search)).toList();
+        if (!silent) _loading = false;
       });
     }
 
@@ -121,6 +143,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
       } catch (_) {}
     }
 
+    _cachedZchatMap = result;
     if (mounted) setState(() { _zchatMap = result; _zchatChecking = false; });
   }
 
