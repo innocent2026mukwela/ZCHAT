@@ -345,7 +345,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
       return _ErrorView(error: _error, onRetry: _loadContacts);
     }
 
-    // Build items: [New group, New contact] + alphabet-sectioned contacts
+    // Build items: [New group, New contact] + two-section contact list
     final items = <_ListItem>[];
     items.add(_ListItem.action(
       icon: Icons.group_add_rounded, label: 'New group',
@@ -356,14 +356,16 @@ class _NewChatScreenState extends State<NewChatScreen> {
       onTap: _newContact,
     ));
 
-    String? lastLetter;
-    for (final entry in _filtered) {
-      final letter = entry.displayName[0].toUpperCase();
-      if (letter != lastLetter && RegExp(r'[A-Z]').hasMatch(letter)) {
-        items.add(_ListItem.header(letter));
-        lastLetter = letter;
-      }
-      items.add(_ListItem.contact(entry));
+    final onZchat = _filtered.where((e) => _zchatForEntry(e) != null).toList();
+    final invite  = _filtered.where((e) => _zchatForEntry(e) == null).toList();
+
+    if (onZchat.isNotEmpty) {
+      items.add(_ListItem.sectionHeader('On ZCHAT', onZchat.length));
+      for (final e in onZchat) { items.add(_ListItem.contact(e)); }
+    }
+    if (invite.isNotEmpty) {
+      items.add(_ListItem.sectionHeader('Invite to ZCHAT', invite.length));
+      for (final e in invite) { items.add(_ListItem.contact(e)); }
     }
 
     if (_filtered.isEmpty && _search.isNotEmpty) {
@@ -378,12 +380,25 @@ class _NewChatScreenState extends State<NewChatScreen> {
       itemBuilder: (context, index) {
         final item = items[index];
 
-        if (item.type == _ItemType.header) {
+        if (item.type == _ItemType.sectionHeader) {
           return Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-            child: Text(item.letter!,
-              style: TextStyle(color: Colors.white.withAlpha(100),
-                  fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
+            child: Row(children: [
+              Text(item.label!,
+                style: TextStyle(color: Colors.white.withAlpha(160),
+                    fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(20),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text('${item.count}',
+                  style: TextStyle(color: Colors.white.withAlpha(160),
+                      fontSize: 11, fontWeight: FontWeight.w600)),
+              ),
+            ]),
           );
         }
 
@@ -730,24 +745,25 @@ class _ZchatUser {
       required this.photoUrl, required this.role});
 }
 
-enum _ItemType { action, header, contact }
+enum _ItemType { action, sectionHeader, contact }
 
 class _ListItem {
   final _ItemType type;
-  final String? letter, label;
+  final String? label;
   final IconData? icon;
   final VoidCallback? onTap;
   final _ContactEntry? entry;
+  final int? count;
 
-  const _ListItem._({required this.type, this.letter, this.label,
-      this.icon, this.onTap, this.entry});
+  const _ListItem._({required this.type, this.label,
+      this.icon, this.onTap, this.entry, this.count});
 
   factory _ListItem.action({required IconData icon, required String label,
       required VoidCallback onTap}) =>
       _ListItem._(type: _ItemType.action, icon: icon, label: label, onTap: onTap);
 
-  factory _ListItem.header(String letter) =>
-      _ListItem._(type: _ItemType.header, letter: letter);
+  factory _ListItem.sectionHeader(String label, int count) =>
+      _ListItem._(type: _ItemType.sectionHeader, label: label, count: count);
 
   factory _ListItem.contact(_ContactEntry entry) =>
       _ListItem._(type: _ItemType.contact, entry: entry);
