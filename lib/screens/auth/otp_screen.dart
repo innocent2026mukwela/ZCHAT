@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pinput/pinput.dart';
 import '../../services/auth_service.dart';
+import '../../services/two_step_service.dart';
 import '../../services/zego_service.dart';
 import '../../utils/glass.dart';
 
@@ -46,6 +47,18 @@ class _OtpScreenState extends State<OtpScreen> {
       final result = await AuthService.verifyOtp(widget.phoneNumber, otp);
       await ZegoService.init();
       if (!mounted) return;
+
+      // Two-step verification: if user has a PIN, require it before entry
+      final pinEnabled = await TwoStepService.isEnabled();
+      if (pinEnabled && mounted) {
+        final passed = await _showPinChallenge();
+        if (!passed) {
+          setState(() { _error = 'Incorrect PIN. Try again.'; _pinController.clear(); });
+          _focusNode.requestFocus();
+          return;
+        }
+      }
+      if (!mounted) return;
       context.go(result['needsProfile'] == true ? '/profile-setup' : '/home');
     } catch (e) {
       setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _pinController.clear(); });
@@ -53,6 +66,43 @@ class _OtpScreenState extends State<OtpScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<bool> _showPinChallenge() async {
+    final ctrl = TextEditingController();
+    bool? passed;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0E1829),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Two-step verification',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Enter your 6-digit PIN to continue.',
+              style: TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 16),
+          Pinput(
+            controller: ctrl,
+            length: 6,
+            obscureText: true,
+            autofocus: true,
+            onCompleted: (pin) async {
+              final ok = await TwoStepService.verify(pin);
+              if (ctx.mounted) Navigator.pop(ctx, ok);
+            },
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    ).then((v) => passed = v as bool?);
+    return passed == true;
   }
 
   Future<void> _resend() async {

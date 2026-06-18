@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import '../router.dart';
 
 /// Top-level handler for background/terminated messages (must be top-level).
 @pragma('vm:entry-point')
@@ -81,6 +82,9 @@ class FcmService {
   static GlobalKey<ScaffoldMessengerState> get messengerKey => _messengerKey;
 
   static void _handleForeground(RemoteMessage message) {
+    // Read receipts are silent — tick marks update via Firestore streams.
+    if (message.data['readReceipt'] == 'true') return;
+
     final n = message.notification;
     if (n == null) return;
     debugPrint('[FCM] Foreground: ${n.title} — ${n.body}');
@@ -110,6 +114,10 @@ class FcmService {
 
   static void _handleOpen(RemoteMessage message) {
     debugPrint('[FCM] Opened from notification: ${message.data}');
-    // Deep-link handling can be added here (e.g. navigate to chat)
+    final chatId = message.data['chatId'] as String?;
+    if (chatId != null && chatId.isNotEmpty) {
+      final name = Uri.encodeComponent(message.data['chatName'] as String? ?? 'Chat');
+      appRouter.go('/chats/$chatId?name=$name');
+    }
   }
 }

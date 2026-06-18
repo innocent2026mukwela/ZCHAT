@@ -60,6 +60,7 @@ class _StatusScreenState extends State<StatusScreen> {
     super.initState();
     _myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     _loadMyProfile();
+    StatusService.pruneExpiredStatuses();
     StatusService.myStatusStream().listen((items) {
       if (mounted) setState(() => _myItems = items);
     });
@@ -182,12 +183,6 @@ class _StatusScreenState extends State<StatusScreen> {
                 color: Colors.white70),
             title: Text(isMuted ? 'Unmute updates' : 'Mute updates',
                 style: const TextStyle(color: Colors.white)),
-            onTap: () { Navigator.pop(context); _toggleMute(uid); },
-          ),
-          ListTile(
-            leading: const Icon(Icons.visibility_off_outlined, color: Colors.white70),
-            title: const Text('Hide updates from this contact',
-                style: TextStyle(color: Colors.white)),
             onTap: () { Navigator.pop(context); _toggleMute(uid); },
           ),
           const SizedBox(height: 8),
@@ -788,16 +783,36 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
     final text = _ctrl.text.trim();
     if (text.isEmpty) return;
     setState(() => _posting = true);
-    await StatusService.postTextStatus(text);
-    if (mounted) { Navigator.pop(context); widget.onDone(); }
+    try {
+      await StatusService.postTextStatus(text);
+      if (mounted) { Navigator.pop(context); widget.onDone(); }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _posting = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to post: ${e.toString().replaceFirst("Exception: ", "")}'),
+          backgroundColor: Colors.redAccent, behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
   }
 
   Future<void> _pickImage(ImageSource source) async {
     final picked = await ImagePicker().pickImage(source: source, imageQuality: 75);
     if (picked == null || !mounted) return;
     setState(() => _posting = true);
-    await StatusService.postImageStatus(picked.path, caption: _ctrl.text.trim());
-    if (mounted) { Navigator.pop(context); widget.onDone(); }
+    try {
+      await StatusService.postImageStatus(picked.path, caption: _ctrl.text.trim());
+      if (mounted) { Navigator.pop(context); widget.onDone(); }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _posting = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to post photo: ${e.toString().replaceFirst("Exception: ", "")}'),
+          backgroundColor: Colors.redAccent, behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
   }
 
   Future<void> _pickVideo(ImageSource source) async {
@@ -814,8 +829,15 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
       final url = await ref.getDownloadURL();
       await StatusService.postVideoStatus(url, caption: _ctrl.text.trim());
       if (mounted) { Navigator.pop(context); widget.onDone(); }
-    } catch (_) {
-      if (mounted) setState(() => _posting = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _posting = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to post video: ${e.toString().replaceFirst("Exception: ", "")}'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
     }
   }
 
@@ -1303,8 +1325,24 @@ class _StatusViewerState extends State<_StatusViewer>
                       color: Colors.white70),
                   onPressed: () async {
                     final nav = Navigator.of(context);
-                    await StatusService.deleteItem(
-                        _items[_cur]['id'] as String);
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        backgroundColor: const Color(0xFF0E1829),
+                        title: const Text('Delete update?',
+                            style: TextStyle(color: Colors.white)),
+                        content: const Text('This status update will be removed.',
+                            style: TextStyle(color: Colors.white70)),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(context, false),
+                              child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+                          TextButton(onPressed: () => Navigator.pop(context, true),
+                              child: const Text('Delete', style: TextStyle(color: Colors.redAccent))),
+                        ],
+                      ),
+                    );
+                    if (ok != true || !mounted) return;
+                    await StatusService.deleteItem(_items[_cur]['id'] as String);
                     if (!mounted) return;
                     if (_items.length == 1) {
                       nav.pop();

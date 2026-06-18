@@ -72,6 +72,10 @@ dependencies:
   intl_phone_field: ^3.2.0
   http: ^1.2.2
 
+  # Encryption
+  encrypt: ^5.0.3
+  crypto: ^3.0.3
+
   # Biometrics / chat lock
   local_auth: ^2.3.0
 

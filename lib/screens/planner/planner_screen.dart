@@ -88,9 +88,9 @@ class _PlannerScreenState extends State<PlannerScreen> with SingleTickerProvider
                       isScrollable: true,
                       tabAlignment: TabAlignment.start,
                       tabs: [
-                        Tab(text: _role == 'lecturer' ? 'SCHEDULE' : 'TIMETABLE'),
-                        const Tab(text: 'STUDY PLAN'),
-                        const Tab(text: 'STUDY GUIDES'),
+                        Tab(text: _role == 'lecturer' ? 'SCHEDULE'      : 'TIMETABLE'),
+                        Tab(text: _role == 'lecturer' ? 'LESSON PLAN'   : 'STUDY PLAN'),
+                        Tab(text: _role == 'lecturer' ? 'TEACHING NOTES': 'STUDY GUIDES'),
                         const Tab(text: 'REMINDERS'),
                       ],
                     ),
@@ -253,14 +253,29 @@ class _SlotTile extends StatelessWidget {
           PopupMenuButton<String>(
             icon: Icon(Icons.more_vert_rounded, color: Colors.white.withAlpha(160), size: 18),
             color: const Color(0xFF1A2550),
-            onSelected: (v) {
+            onSelected: (v) async {
               if (v == 'edit') {
                 showModalBottomSheet(
                   context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
                   builder: (_) => _TimetableForm(role: role, existing: slot),
                 );
               } else if (v == 'delete') {
-                PlannerService.deleteTimetableSlot(slot['id'] as String);
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    backgroundColor: const Color(0xFF0A1A4A),
+                    title: const Text('Delete slot?', style: TextStyle(color: Colors.white)),
+                    content: Text('Remove "${slot['subject'] ?? ''}" from your timetable?',
+                        style: const TextStyle(color: Colors.white70)),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+                      TextButton(onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Delete', style: TextStyle(color: Colors.redAccent))),
+                    ],
+                  ),
+                );
+                if (ok == true) PlannerService.deleteTimetableSlot(slot['id'] as String);
               }
             },
             itemBuilder: (_) => [
@@ -390,14 +405,29 @@ class _StudyPlanTile extends StatelessWidget {
           PopupMenuButton<String>(
             icon: Icon(Icons.more_vert_rounded, color: Colors.white.withAlpha(160), size: 18),
             color: const Color(0xFF1A2550),
-            onSelected: (v) {
+            onSelected: (v) async {
               if (v == 'edit') {
                 showModalBottomSheet(
                   context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
                   builder: (_) => _StudyPlanForm(existing: plan),
                 );
               } else if (v == 'delete') {
-                PlannerService.deleteStudyPlan(plan['id'] as String);
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    backgroundColor: const Color(0xFF0A1A4A),
+                    title: const Text('Delete session?', style: TextStyle(color: Colors.white)),
+                    content: Text('Remove "${plan['topic'] ?? ''}" from your study plan?',
+                        style: const TextStyle(color: Colors.white70)),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+                      TextButton(onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Delete', style: TextStyle(color: Colors.redAccent))),
+                    ],
+                  ),
+                );
+                if (ok == true) PlannerService.deleteStudyPlan(plan['id'] as String);
               }
             },
             itemBuilder: (_) => [
@@ -469,14 +499,29 @@ class _StudyGuidesTab extends StatelessWidget {
                   PopupMenuButton<String>(
                     icon: Icon(Icons.more_vert_rounded, color: Colors.white.withAlpha(160), size: 18),
                     color: const Color(0xFF1A2550),
-                    onSelected: (v) {
+                    onSelected: (v) async {
                       if (v == 'edit') {
                         showModalBottomSheet(
                           context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
                           builder: (_) => _StudyGuideForm(existing: g),
                         );
                       } else if (v == 'delete') {
-                        PlannerService.deleteStudyGuide(g['id'] as String);
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (_) => AlertDialog(
+                            backgroundColor: const Color(0xFF0A1A4A),
+                            title: const Text('Delete guide?', style: TextStyle(color: Colors.white)),
+                            content: Text('Remove "$title"?',
+                                style: const TextStyle(color: Colors.white70)),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(context, false),
+                                  child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+                              TextButton(onPressed: () => Navigator.pop(context, true),
+                                  child: const Text('Delete', style: TextStyle(color: Colors.redAccent))),
+                            ],
+                          ),
+                        );
+                        if (ok == true) PlannerService.deleteStudyGuide(g['id'] as String);
                       }
                     },
                     itemBuilder: (_) => [
@@ -686,6 +731,14 @@ class _TimetableFormState extends State<_TimetableForm> {
         await PlannerService.addTimetableSlot(data);
       }
       if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -831,6 +884,14 @@ class _StudyPlanFormState extends State<_StudyPlanForm> {
         await PlannerService.addStudyPlan(data);
       }
       if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -921,6 +982,14 @@ class _StudyGuideFormState extends State<_StudyGuideForm> {
         await PlannerService.addStudyGuide(data);
       }
       if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }

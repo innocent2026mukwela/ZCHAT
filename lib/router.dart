@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart' show GlobalKey, NavigatorState;
 import 'package:go_router/go_router.dart';
 import 'screens/auth/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
@@ -29,9 +30,13 @@ import 'screens/ai_assistant/study_insights_screen.dart';
 import 'screens/planner/planner_screen.dart';
 import 'screens/profile/profile_screen.dart';
 import 'screens/lecturer/lecturer_screens.dart';
+import 'screens/broadcasts/broadcast_screen.dart';
 import 'screens/threads/threads_screen.dart';
 
+final appNavigatorKey = GlobalKey<NavigatorState>();
+
 final appRouter = GoRouter(
+  navigatorKey: appNavigatorKey,
   initialLocation: '/',
   routes: [
     GoRoute(path: '/',              builder: (c, s) => const SplashScreen()),
@@ -122,6 +127,9 @@ final appRouter = GoRouter(
     GoRoute(path: '/ai/summaries/:courseId',    builder: (c, s) => SummaryScreen(courseId: s.pathParameters['courseId']!)),
     GoRoute(path: '/ai/group-summarizer',       builder: (c, s) => const GroupSummarizerScreen()),
     GoRoute(path: '/ai/insights',               builder: (c, s) => const StudyInsightsScreen()),
+
+    // Broadcasts
+    GoRoute(path: '/broadcasts', builder: (c, s) => const BroadcastScreen()),
 
     // Planner & Profile
     GoRoute(path: '/planner', builder: (c, s) => const PlannerScreen()),

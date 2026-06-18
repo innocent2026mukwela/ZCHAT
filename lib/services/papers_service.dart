@@ -87,6 +87,22 @@ class PapersService {
     });
   }
 
+  /// Returns true if a paper for the same course/year/semester already exists.
+  static Future<bool> duplicateExists({
+    required String courseId,
+    required int year,
+    required int semester,
+  }) async {
+    final snap = await _db
+        .collection('papers')
+        .where('courseId', isEqualTo: courseId)
+        .where('year', isEqualTo: year)
+        .where('semester', isEqualTo: semester)
+        .limit(1)
+        .get();
+    return snap.docs.isNotEmpty;
+  }
+
   /// Check if the current user is a lecturer.
   static Future<bool> isLecturer() async {
     final doc = await _db.collection('users').doc(_me.uid).get();

@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'ai_service.dart';
+import 'encryption_service.dart';
 
 class ChatService {
   static final _db      = FirebaseFirestore.instance;
@@ -22,6 +23,7 @@ class ChatService {
     if (!snap.exists) {
       final myDoc    = await _db.collection('users').doc(_myUid).get();
       final otherDoc = await _db.collection('users').doc(otherUid).get();
+      if (!otherDoc.exists) throw Exception('This user no longer has an active account.');
       final myName    = myDoc.data()?['fullName']    as String?
                      ?? myDoc.data()?['displayName'] as String? ?? 'Unknown';
       final otherName = otherDoc.data()?['fullName']    as String?
@@ -85,6 +87,7 @@ class ChatService {
     String? imageUrl,
     String? audioUrl,
     String? voiceDuration,
+    bool viewOnce = false,
   }) async {
     final msgRef  = _db.collection('chats').doc(chatId).collection('messages').doc();
     final chatRef = _db.collection('chats').doc(chatId);
@@ -94,12 +97,14 @@ class ChatService {
     final senderName = _auth.currentUser?.displayName
         ?? _auth.currentUser?.email ?? 'Unknown';
 
+    final encryptedText = await EncryptionService.encrypt(chatId, text);
+
     batch.set(msgRef, {
       'id':            msgRef.id,
       'chatId':        chatId,
       'senderUid':     _myUid,
       'senderName':    senderName,
-      'text':          text,
+      'text':          encryptedText,
       'type':          type,
       'imageUrl':      imageUrl,
       'audioUrl':      audioUrl,
@@ -112,6 +117,8 @@ class ChatService {
       'replyToSenderName': replyToSenderName,
       'deleted':       false,
       'edited':        false,
+      'viewOnce':      viewOnce,
+      'viewOnceViewedBy': [],
     });
 
     final chatSnap = await chatRef.get();
@@ -150,14 +157,15 @@ class ChatService {
 
   // ── Image upload + send ──────────────────────────────────────────────────
 
-  static Future<void> sendImage(String chatId, File imageFile, {String caption = ''}) async {
+  static Future<void> sendImage(String chatId, File imageFile,
+      {String caption = '', bool viewOnce = false}) async {
     final ext  = imageFile.path.split('.').last;
     final path = 'chat_images/$chatId/${DateTime.now().millisecondsSinceEpoch}.$ext';
     final ref  = _storage.ref().child(path);
     await ref.putFile(imageFile);
     final url  = await ref.getDownloadURL();
     await sendMessage(chatId, caption.isNotEmpty ? caption : '📷 Photo',
-        type: 'image', imageUrl: url);
+        type: 'image', imageUrl: url, viewOnce: viewOnce);
   }
 
   // ── Reactions / delete ───────────────────────────────────────────────────
@@ -191,6 +199,23 @@ class ChatService {
         .update({'deleted': true, 'text': 'This message was deleted'});
   }
 
+  static Future<void> deleteForMe(String chatId, String messageId) async {
+    await _db
+        .collection('users').doc(_myUid)
+        .collection('deletedMessages')
+        .doc('${chatId}_$messageId')
+        .set({'chatId': chatId, 'messageId': messageId, 'deletedAt': FieldValue.serverTimestamp()});
+  }
+
+  static Future<Set<String>> getDeletedForMeIds(String chatId) async {
+    final snap = await _db
+        .collection('users').doc(_myUid)
+        .collection('deletedMessages')
+        .where('chatId', isEqualTo: chatId)
+        .get();
+    return snap.docs.map((d) => d.data()['messageId'] as String).toSet();
+  }
+
   // ── Read / unread / pin / archive ────────────────────────────────────────
 
   static Future<void> markRead(String chatId) async {
@@ -220,6 +245,22 @@ class ChatService {
         }
       }
       await batch.commit();
+
+      // Ping other members so their tick marks update while app is in background
+      final chatSnap = await _db.collection('chats').doc(chatId).get();
+      final memberUids = List<String>.from(
+          chatSnap.data()?['memberUids'] as List? ?? []);
+      for (final uid in memberUids) {
+        if (uid == _myUid) continue;
+        try {
+          await AiService.sendNotification(
+            recipientUid: uid,
+            title: '',
+            body: '',
+            data: {'readReceipt': 'true', 'chatId': chatId},
+          );
+        } catch (_) {}
+      }
     } catch (_) {}
   }
 
@@ -315,21 +356,43 @@ class ChatService {
 
   static Future<void> addGroupMember(String chatId, String uid, String name) async {
     await _db.collection('chats').doc(chatId).update({
-      'members': FieldValue.arrayUnion([uid]),
+      'members':    FieldValue.arrayUnion([uid]),
+      'memberUids': FieldValue.arrayUnion([uid]),
       'memberNames.$uid': name,
       'unreadCount.$uid': 0,
-      'archived.$uid': false,
+      'archived.$uid':    false,
     });
   }
 
   static Future<void> removeGroupMember(String chatId, String uid) async {
     await _db.collection('chats').doc(chatId).update({
-      'members': FieldValue.arrayRemove([uid]),
+      'members':    FieldValue.arrayRemove([uid]),
+      'memberUids': FieldValue.arrayRemove([uid]),
     });
   }
 
   static Future<void> leaveGroup(String chatId) async {
     await removeGroupMember(chatId, _myUid);
+  }
+
+  static Future<void> promoteAdmin(String chatId, String uid) async {
+    await _db.collection('chats').doc(chatId).update({
+      'adminUids': FieldValue.arrayUnion([uid]),
+    });
+  }
+
+  static Future<void> demoteAdmin(String chatId, String uid) async {
+    await _db.collection('chats').doc(chatId).update({
+      'adminUids': FieldValue.arrayRemove([uid]),
+    });
+  }
+
+  static Future<void> setGroupDescription(String chatId, String description) async {
+    await _db.collection('chats').doc(chatId).update({'description': description});
+  }
+
+  static Future<void> setGroupInviteToken(String chatId, String token) async {
+    await _db.collection('chats').doc(chatId).update({'inviteToken': token});
   }
 
   // ── Streams ──────────────────────────────────────────────────────────────
@@ -393,7 +456,14 @@ class ChatService {
         .collection('messages')
         .orderBy('createdAt')
         .snapshots()
-        .map((snap) => snap.docs.map((d) => d.data()).toList());
+        .asyncMap((snap) async {
+          final docs = snap.docs.map((d) => Map<String, dynamic>.from(d.data())).toList();
+          for (final doc in docs) {
+            final raw = doc['text'] as String? ?? '';
+            if (raw.isNotEmpty) doc['text'] = await EncryptionService.decrypt(chatId, raw);
+          }
+          return docs;
+        });
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────

@@ -155,6 +155,25 @@ class StatusService {
         .delete();
   }
 
+  // ── Prune my expired status items (server-side cleanup) ──────────────────
+
+  static Future<void> pruneExpiredStatuses() async {
+    try {
+      final cutoff = Timestamp.fromDate(
+          DateTime.now().subtract(const Duration(hours: 24)));
+      final snap = await _db
+          .collection('statuses')
+          .doc(_myUid)
+          .collection('items')
+          .where('createdAt', isLessThan: cutoff)
+          .get();
+      if (snap.docs.isEmpty) return;
+      final batch = _db.batch();
+      for (final doc in snap.docs) { batch.delete(doc.reference); }
+      await batch.commit();
+    } catch (_) {}
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   static String timeAgo(Timestamp? ts) {

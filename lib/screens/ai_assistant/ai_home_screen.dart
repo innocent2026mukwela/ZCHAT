@@ -17,6 +17,7 @@ class AiHomeScreen extends StatefulWidget {
 class _AiHomeScreenState extends State<AiHomeScreen> {
   List<Map<String, dynamic>> _conversations = [];
   bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -25,11 +26,12 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
   }
 
   Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
     try {
       final convos = await AiService.fetchConversations();
       if (mounted) setState(() { _conversations = convos; _loading = false; });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _error = e.toString().replaceFirst('Exception: ', ''); });
     }
   }
 
@@ -52,6 +54,16 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
                 child: Center(child: CircularProgressIndicator(color: Color(0xFFB794F4))),
+              )
+            else if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Row(children: [
+                  const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(_error!, style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 13))),
+                  TextButton(onPressed: _load, child: const Text('Retry', style: TextStyle(color: Color(0xFFB794F4)))),
+                ]),
               )
             else if (_conversations.isNotEmpty) ..._buildRecentSection(context),
             const SizedBox(height: 24),

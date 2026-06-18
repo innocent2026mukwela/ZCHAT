@@ -52,7 +52,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     if (_role == 'lecturer') {
       final email = _emailCtrl.text.trim().toLowerCase();
       if (!email.endsWith('@unza.zm') && !email.endsWith('@unza.ac.zm')) {
-        setState(() => _error = 'Lecturer email must be a UNZA institutional address (@unza.zm)');
+        setState(() => _error = 'Lecturer email must be a UNZA institutional address (@unza.zm or @unza.ac.zm)');
         return;
       }
     }
@@ -283,7 +283,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                           validator: (v) {
                             final email = v?.trim().toLowerCase() ?? '';
                             if (email.isEmpty) return 'UNZA email is required';
-                            if (!email.endsWith('@unza.zm')) return 'Use your @unza.zm email';
+                            if (!email.endsWith('@unza.zm') && !email.endsWith('@unza.ac.zm')) return 'Use your UNZA institutional email (@unza.zm or @unza.ac.zm)';
                             return null;
                           },
                         ).animate(delay: 300.ms).fadeIn().slideY(begin: 0.1, end: 0),

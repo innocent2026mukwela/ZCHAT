@@ -36,7 +36,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _Msg(text: "Hi! I'm ZChat AI, your academic assistant. Ask me anything about your courses — I'll explain concepts, solve problems, and help you prepare for exams. 📚", isAi: true),
   ];
 
-  static const _suggestions = [
+  static const _defaultSuggestions = [
     '📊 Explain recursion with examples',
     '⚡ What is Big-O notation?',
     '🌳 Summarise binary search trees',
@@ -44,6 +44,19 @@ class _AiChatScreenState extends State<AiChatScreen> {
     '💡 How does dynamic programming work?',
     '🎯 Exam tips for Data Structures',
   ];
+
+  List<String> get _activeSuggestions {
+    final c = _course;
+    if (c == null) return _defaultSuggestions;
+    return [
+      '📚 Explain a key concept in $c',
+      '❓ Give me practice questions for $c',
+      '📋 What are common exam topics in $c?',
+      '📝 Summarise the main topics in $c',
+      '💡 How should I study for $c?',
+      '🔑 What are the most important topics in $c?',
+    ];
+  }
 
   // Conversation history sent to Claude on every turn (role + content pairs)
   final List<Map<String, String>> _history = [];
@@ -70,7 +83,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
       );
       if (!mounted) return;
       final reply = result['reply'] as String;
-      _conversationId = result['conversationId'] as String? ?? _conversationId;
+      _conversationId = result['conversationId'] as String?;
       _history.add({'role': 'assistant', 'content': reply});
       setState(() { _loading = false; _messages.add(_Msg(text: reply, isAi: true)); });
     } catch (e) {
@@ -111,26 +124,33 @@ class _AiChatScreenState extends State<AiChatScreen> {
       });
       _scrollDown();
     } catch (e) {
-      if (mounted) setState(() => _loadingHistory = false);
+      if (mounted) {
+        setState(() => _loadingHistory = false);
+        _messages.add(_Msg(text: '⚠️ Could not load conversation history.', isAi: true));
+      }
     }
   }
 
   Future<void> _loadCourses() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
-    final snap = await FirebaseFirestore.instance
-        .collection('users').doc(uid).collection('timetable').get();
-    final seen = <String>{};
-    for (final doc in snap.docs) {
-      final subject = (doc.data()['subject'] as String? ?? '').trim();
-      if (subject.isNotEmpty) seen.add(subject);
-    }
-    if (mounted) {
-      setState(() {
-        _courses
-          ..clear()
-          ..addAll(seen.toList()..sort());
-      });
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('users').doc(uid).collection('timetable').get();
+      final seen = <String>{};
+      for (final doc in snap.docs) {
+        final subject = (doc.data()['subject'] as String? ?? '').trim();
+        if (subject.isNotEmpty) seen.add(subject);
+      }
+      if (mounted) {
+        setState(() {
+          _courses
+            ..clear()
+            ..addAll(seen.toList()..sort());
+        });
+      }
+    } catch (_) {
+      // Course list is non-critical; AI still works in General mode
     }
   }
 
@@ -247,7 +267,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 itemCount: _messages.length + (_loading ? 1 : 0) + (_messages.length == 1 ? 1 : 0),
                 itemBuilder: (ctx, i) {
-                  if (i == 1 && _messages.length == 1) return _Suggestions(suggestions: _suggestions, onTap: _send);
+                  if (i == 1 && _messages.length == 1) return _Suggestions(suggestions: _activeSuggestions, onTap: _send);
                   final mi = (_messages.length == 1 && i > 1) ? i - 1 : i;
                   if (_loading && mi == _messages.length) return const _Typing();
                   if (mi >= _messages.length) return const SizedBox();
@@ -336,6 +356,22 @@ class _AiChatScreenState extends State<AiChatScreen> {
             trailing: _course == c ? const Icon(Icons.check_rounded, color: Color(0xFF4F8AFF)) : null,
             onTap: () { setState(() => _course = c); Navigator.pop(context); },
           )),
+          if (_courses.isEmpty) ...[
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: () { Navigator.pop(context); context.push('/planner'); },
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: const Color(0xFF2563EB).withAlpha(20), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(40))),
+                child: Row(children: [
+                  const Icon(Icons.calendar_today_rounded, color: Color(0xFF4F8AFF), size: 16),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text('No courses found. Tap to set up your timetable.', style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 12, height: 1.4))),
+                  const Icon(Icons.chevron_right_rounded, color: Colors.white54, size: 16),
+                ]),
+              ),
+            ),
+          ],
         ]),
       ),
     );

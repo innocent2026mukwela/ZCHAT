@@ -197,6 +197,14 @@ class _ChatListScreenState extends State<ChatListScreen>
                     return const Center(child: CircularProgressIndicator(
                         color: Color(0xFF4F8AFF), strokeWidth: 2));
                   }
+                  if (snap.hasError) {
+                    return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.error_outline_rounded, color: Colors.redAccent.withAlpha(180), size: 36),
+                      const SizedBox(height: 10),
+                      Text('Could not load chats',
+                          style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 14)),
+                    ]));
+                  }
 
                   final allData = snap.data ?? [];
                   final chats   = _filter(allData);
@@ -225,7 +233,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                         index:    idx,
                         isLocked: _lockedChats.contains(
                             chats[idx]['id'] as String? ?? ''),
-                        onAction: () => setState(() {}),
+                        onAction: _loadLockedChats,
                         onTap:    () => _openChat(context, chats[idx]),
                       );
                     },
@@ -295,10 +303,20 @@ class _ChatListScreenState extends State<ChatListScreen>
                     if (!_searching) { _search = ''; _searchCtrl.clear(); }
                   }),
                 ),
-                IconButton(
+                PopupMenuButton<String>(
                   icon: Icon(Icons.more_vert_rounded,
                       color: Colors.white.withAlpha(200)),
-                  onPressed: () => context.push('/new-chat'),
+                  color: const Color(0xFF0A1A4A),
+                  onSelected: (v) {
+                    if (v == 'starred') context.push('/starred');
+                    if (v == 'new_group') context.push('/new-group');
+                    if (v == 'new_contact') context.push('/new-chat');
+                  },
+                  itemBuilder: (_) => [
+                    PopupMenuItem(value: 'new_group',   child: Text('New group',       style: TextStyle(color: Colors.white.withAlpha(220)))),
+                    PopupMenuItem(value: 'starred',     child: Text('Starred messages', style: TextStyle(color: Colors.white.withAlpha(220)))),
+                    PopupMenuItem(value: 'new_contact', child: Text('New contact',     style: TextStyle(color: Colors.white.withAlpha(220)))),
+                  ],
                 ),
               ]),
             ),
@@ -553,10 +571,24 @@ class _ChatTile extends StatelessWidget {
             leading: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
             title: const Text('Delete chat',
                 style: TextStyle(color: Colors.redAccent)),
-            onTap: () {
+            onTap: () async {
               Navigator.pop(sheetCtx);
-              ChatService.deleteChat(chatId);
-              onAction();
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (_) => AlertDialog(
+                  backgroundColor: const Color(0xFF0E1829),
+                  title: const Text('Delete chat?', style: TextStyle(color: Colors.white)),
+                  content: Text('All messages with $name will be removed.',
+                      style: TextStyle(color: Colors.white.withAlpha(180))),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+                    TextButton(onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Delete', style: TextStyle(color: Colors.redAccent))),
+                  ],
+                ),
+              );
+              if (ok == true) { ChatService.deleteChat(chatId); onAction(); }
             },
           ),
           const SizedBox(height: 8),

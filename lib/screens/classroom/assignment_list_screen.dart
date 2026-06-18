@@ -109,17 +109,27 @@ class _AssignmentListScreenState extends State<AssignmentListScreen> {
                 final title = titleCtrl.text.trim();
                 if (title.isEmpty) return;
                 final marks = int.tryParse(marksCtrl.text.trim()) ?? 20;
-                await FirebaseFirestore.instance
-                    .collection('courses').doc(widget.courseId)
-                    .collection('assignments')
-                    .add({
-                      'title': title,
-                      'dueDate': Timestamp.fromDate(dueDate),
-                      'maxMarks': marks,
-                      'status': 'open',
-                      'createdAt': FieldValue.serverTimestamp(),
-                    });
-                if (ctx.mounted) Navigator.pop(ctx);
+                try {
+                  await FirebaseFirestore.instance
+                      .collection('courses').doc(widget.courseId)
+                      .collection('assignments')
+                      .add({
+                        'title': title,
+                        'dueDate': Timestamp.fromDate(dueDate),
+                        'maxMarks': marks,
+                        'status': 'open',
+                        'createdAt': FieldValue.serverTimestamp(),
+                      });
+                  if (ctx.mounted) Navigator.pop(ctx);
+                } catch (e) {
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                      content: Text('Could not create assignment: ${e.toString().replaceFirst("Exception: ", "")}'),
+                      backgroundColor: Colors.redAccent,
+                      behavior: SnackBarBehavior.floating,
+                    ));
+                  }
+                }
               },
               child: const Text('Create Assignment', style: TextStyle(fontWeight: FontWeight.w700)),
             ),
@@ -185,6 +195,10 @@ class _AssignmentListScreenState extends State<AssignmentListScreen> {
                   if (snap.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF)));
                   }
+                  if (snap.hasError) {
+                    return Center(child: Text('Could not load assignments',
+                        style: TextStyle(color: Colors.white.withAlpha(140))));
+                  }
                   final filtered = _applyFilter(snap.data ?? []);
                   if (filtered.isEmpty) {
                     return Center(child: Text(
@@ -214,7 +228,13 @@ class _AssignmentListScreenState extends State<AssignmentListScreen> {
                           borderRadius: BorderRadius.circular(14),
                           onTap: () {
                             if (status == 'open')   context.push('/classroom/submit/$id');
-                            if (status == 'graded') context.push('/classroom/grades/$id');
+                            else if (status == 'graded') context.push('/classroom/grades/$id');
+                            else {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                content: Text('Submitted — awaiting lecturer grade'),
+                                behavior: SnackBarBehavior.floating,
+                              ));
+                            }
                           },
                           child: Row(children: [
                             Container(

@@ -311,7 +311,7 @@ class _CallsScreenState extends State<CallsScreen>
     if (otherUid.isEmpty) return;
     final chatId = await ChatService.getOrCreateChat(otherUid);
     if (!mounted) return;
-    context.push('/chats/$chatId');
+    context.push('/chats/${Uri.encodeComponent(chatId)}');
   }
 
   Widget _buildAppBar() {
@@ -373,6 +373,10 @@ class _CallHistory extends StatelessWidget {
       builder: (ctx, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF), strokeWidth: 2));
+        }
+        if (snap.hasError) {
+          return Center(child: Text('Could not load call history',
+              style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 14)));
         }
 
         final all = snap.data ?? [];
@@ -698,9 +702,25 @@ class _CallTile extends StatelessWidget {
                 icon: Icons.delete_outline_rounded,
                 label: 'Delete call',
                 color: const Color(0xFFEF4444),
-                onTap: () {
+                onTap: () async {
                   Navigator.pop(context);
-                  onDelete();
+                  final ok = await showDialog<bool>(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      backgroundColor: const Color(0xFF0E1829),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      title: const Text('Delete call?', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                      content: Text('Remove this call from your history?',
+                          style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 14)),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(context, false),
+                            child: Text('Cancel', style: TextStyle(color: Colors.white.withAlpha(160)))),
+                        TextButton(onPressed: () => Navigator.pop(context, true),
+                            child: const Text('Delete', style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w700))),
+                      ],
+                    ),
+                  );
+                  if (ok == true) onDelete();
                 },
               ),
               const SizedBox(height: 8),
@@ -841,8 +861,12 @@ class _NewCallSheetState extends State<_NewCallSheet>
   }
 
   Future<void> _loadContacts() async {
-    final result = await _loadZchatContacts();
-    if (mounted) setState(() { _contacts = result; _filtered = result; _loading = false; });
+    try {
+      final result = await _loadZchatContacts();
+      if (mounted) setState(() { _contacts = result; _filtered = result; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   void _search(String q) => setState(() {

@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/papers_service.dart';
 import '../../utils/glass.dart';
@@ -25,6 +26,10 @@ class _PaperListScreenState extends State<PaperListScreen> {
   void initState() {
     super.initState();
     PapersService.isLecturer().then((v) { if (mounted) setState(() => _isLecturer = v); });
+    SharedPreferences.getInstance().then((p) {
+      final saved = p.getString('bandwidth_mode');
+      if (saved != null && mounted) setState(() => _bandwidth = saved);
+    });
   }
 
   List<Map<String, dynamic>> _applyFilter(List<Map<String, dynamic>> all) {
@@ -84,6 +89,9 @@ class _PaperListScreenState extends State<PaperListScreen> {
                 ),
                 if (snap.connectionState == ConnectionState.waiting)
                   const Expanded(child: Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF))))
+                else if (snap.hasError)
+                  Expanded(child: Center(child: Text('Could not load papers',
+                      style: TextStyle(color: Colors.white.withAlpha(120)))))
                 else if (papers.isEmpty)
                   Expanded(child: Center(
                     child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -161,7 +169,12 @@ class _PaperListScreenState extends State<PaperListScreen> {
               ),
               title: Text(mode, style: const TextStyle(color: Colors.white)),
               trailing: mode == _bandwidth ? const Icon(Icons.check_rounded, color: Color(0xFF86EFAC)) : null,
-              onTap: () { setState(() => _bandwidth = mode); Navigator.pop(context); },
+              onTap: () async {
+                setState(() => _bandwidth = mode);
+                Navigator.pop(context);
+                final p = await SharedPreferences.getInstance();
+                await p.setString('bandwidth_mode', mode);
+              },
             ),
         ]),
       ),
@@ -308,6 +321,12 @@ class _UploadSheetState extends State<_UploadSheet> {
     if (_filePath == null) { setState(() => _error = 'Please select a PDF file'); return; }
     setState(() { _uploading = true; _error = null; });
     try {
+      final exists = await PapersService.duplicateExists(
+        courseId: widget.courseId, year: _year, semester: _semester);
+      if (exists) {
+        if (mounted) setState(() { _uploading = false; _error = 'A paper for $_year Semester $_semester already exists.'; });
+        return;
+      }
       await PapersService.uploadPaper(
         courseId:  widget.courseId,
         filePath:  _filePath!,

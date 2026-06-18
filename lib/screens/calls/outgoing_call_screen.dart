@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
 import '../../services/call_service.dart';
 import '../../services/zego_service.dart';
@@ -116,9 +117,38 @@ class _OutgoingCallScreenState extends State<OutgoingCallScreen>
     }
   }
 
-  void _launchZego() {
+  Future<void> _launchZego() async {
     if (_launched || _roomId == null) return;
     _launched = true;
+
+    final perms = widget.isVideo
+        ? [Permission.microphone, Permission.camera]
+        : [Permission.microphone];
+    final results = await perms.request();
+    final denied = results.entries.where((e) => !e.value.isGranted).map((e) => e.key).toList();
+
+    if (denied.isNotEmpty) {
+      _launched = false;
+      if (!mounted) return;
+      final names = denied.map((p) => p == Permission.camera ? 'Camera' : 'Microphone').join(' & ');
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFF0E1829),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Permission required', style: TextStyle(color: Colors.white)),
+          content: Text('$names access is needed for this call. Please allow it in Settings.',
+              style: TextStyle(color: Colors.white.withAlpha(160))),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+            TextButton(onPressed: () { Navigator.pop(context); openAppSettings(); }, child: const Text('Open Settings', style: TextStyle(color: Color(0xFF4F8AFF)))),
+          ],
+        ),
+      );
+      await _cancelCall();
+      return;
+    }
+
     final me = FirebaseAuth.instance.currentUser!;
     Navigator.of(context).pushReplacement(MaterialPageRoute(
       builder: (_) => ZegoUIKitPrebuiltCall(

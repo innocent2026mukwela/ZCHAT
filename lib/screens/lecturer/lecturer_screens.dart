@@ -84,6 +84,10 @@ class _LecturerHomeScreenState extends State<LecturerHomeScreen> {
           if (snap.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF)));
           }
+          if (snap.hasError) {
+            return Center(child: Text('Could not load chats',
+                style: TextStyle(color: Colors.white.withAlpha(140))));
+          }
           var chats = snap.data ?? [];
           if (_query.isNotEmpty) {
             chats = chats.where((c) {
@@ -245,11 +249,21 @@ class _LecturerCoursesScreenState extends State<LecturerCoursesScreen> {
                 final code = codeCtrl.text.trim();
                 final name = nameCtrl.text.trim();
                 if (code.isEmpty || name.isEmpty) return;
-                await FirebaseFirestore.instance.collection('courses').add({
-                  'code': code, 'name': name,
-                  'lecturerUid': _uid, 'enrolledCount': 0, 'createdAt': FieldValue.serverTimestamp(),
-                });
-                if (ctx.mounted) Navigator.pop(ctx);
+                try {
+                  await FirebaseFirestore.instance.collection('courses').add({
+                    'code': code, 'name': name,
+                    'lecturerUid': _uid, 'enrolledCount': 0, 'createdAt': FieldValue.serverTimestamp(),
+                  });
+                  if (ctx.mounted) Navigator.pop(ctx);
+                } catch (e) {
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                      content: Text('Could not create course: ${e.toString().replaceFirst("Exception: ", "")}'),
+                      backgroundColor: Colors.redAccent,
+                      behavior: SnackBarBehavior.floating,
+                    ));
+                  }
+                }
               },
               child: const Text('Create Course', style: TextStyle(fontWeight: FontWeight.w700)),
             ),
@@ -274,6 +288,10 @@ class _LecturerCoursesScreenState extends State<LecturerCoursesScreen> {
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF)));
+          }
+          if (snap.hasError) {
+            return Center(child: Text('Could not load courses',
+                style: TextStyle(color: Colors.white.withAlpha(140))));
           }
           var courses = snap.data ?? [];
           if (_query.isNotEmpty) {
@@ -450,6 +468,10 @@ class _LecturerPlannerBody extends StatelessWidget {
           .orderBy('date')
           .snapshots(),
       builder: (context, snap) {
+        if (snap.hasError) {
+          return Center(child: Text('Could not load planner',
+              style: TextStyle(color: Colors.white.withAlpha(140))));
+        }
         final docs = snap.data?.docs ?? [];
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 92),
@@ -701,7 +723,11 @@ class _AiPromptCardState extends State<_AiPromptCard> {
       );
     } catch (e) {
       if (!mounted) return;
-      context.push('/ai');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(e.toString().replaceFirst('Exception: ', '')),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+      ));
     } finally {
       if (mounted) setState(() => _loading = false);
     }

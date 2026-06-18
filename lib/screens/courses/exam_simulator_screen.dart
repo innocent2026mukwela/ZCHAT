@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
@@ -86,9 +88,40 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
     });
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     _timer?.cancel();
     setState(() => _submitted = true);
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final qs = _questions ?? [];
+    final total = qs.isEmpty ? 1 : qs.length;
+    final pct = (_score / total * 100).round();
+    final weakTopics = qs
+        .asMap()
+        .entries
+        .where((e) => _answers[e.key] != e.value.answer)
+        .map((e) => e.value.topic)
+        .toSet()
+        .toList();
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('examAttempts')
+          .add({
+        'courseId': widget.courseId,
+        'paperTitle': widget.paperTitle,
+        'score': _score,
+        'total': total,
+        'percentage': pct,
+        'weakTopics': weakTopics,
+        'answers': _answers.map((k, v) => MapEntry(k.toString(), v)),
+        'timeTakenSeconds': 5400 - _secondsLeft,
+        'submittedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {
+      // Non-fatal: results are already shown on screen
+    }
   }
 
   int get _score {
@@ -150,7 +183,7 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
                   style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
               const SizedBox(height: 12),
               _Rule(Icons.timer_outlined, 'Time limit: 1h 30m'),
-              _Rule(Icons.save_outlined, 'Answers auto-save locally in this prototype'),
+              _Rule(Icons.save_outlined, 'Results and weak topics saved to your profile'),
               _Rule(Icons.analytics_outlined, 'Results identify weak topics for a study path'),
               if (isLoading) ...[
                 const SizedBox(height: 16),

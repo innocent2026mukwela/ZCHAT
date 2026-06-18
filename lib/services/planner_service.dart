@@ -59,13 +59,13 @@ class PlannerService {
 
   static Future<void> updateTimetableSlot(String id, Map<String, dynamic> data) async {
     await _timetable.doc(id).update({...data, 'updatedAt': FieldValue.serverTimestamp()});
-    await _notif.cancel(_notifId('t', id));
+    if (_notifInitialised) await _notif.cancel(_notifId('t', id));
     if (data['reminder'] == true) await _scheduleWeeklyReminder(id, data);
   }
 
   static Future<void> deleteTimetableSlot(String id) async {
     await _timetable.doc(id).delete();
-    await _notif.cancel(_notifId('t', id));
+    if (_notifInitialised) await _notif.cancel(_notifId('t', id));
   }
 
   // ── Study Plans ───────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ class PlannerService {
 
   static Future<void> updateStudyPlan(String id, Map<String, dynamic> data) async {
     await _studyPlans.doc(id).update({...data, 'updatedAt': FieldValue.serverTimestamp()});
-    await _notif.cancel(_notifId('s', id));
+    if (_notifInitialised) await _notif.cancel(_notifId('s', id));
     if (data['reminder'] == true && data['dateTime'] != null) {
       await _scheduleOneTimeReminder(id, data);
     }
@@ -102,7 +102,7 @@ class PlannerService {
 
   static Future<void> deleteStudyPlan(String id) async {
     await _studyPlans.doc(id).delete();
-    await _notif.cancel(_notifId('s', id));
+    if (_notifInitialised) await _notif.cancel(_notifId('s', id));
   }
 
   // ── Study Guides ──────────────────────────────────────────────────────────
@@ -135,6 +135,10 @@ class PlannerService {
   static int _notifId(String prefix, String docId) =>
       (prefix + docId).hashCode.abs() % 100000;
 
+  // Note: matchDateTimeComponents.dayOfWeekAndTime fires at the wall-clock time
+  // stored at scheduling time. If the device observes DST, reminders may fire
+  // 1 hour early or late on the changeover weekend — this is a known limitation
+  // of the flutter_local_notifications zonedSchedule API.
   static Future<void> _scheduleWeeklyReminder(String id, Map<String, dynamic> data) async {
     try {
       final dayIndex  = data['dayIndex'] as int? ?? 1;  // 1=Mon … 7=Sun
@@ -189,6 +193,6 @@ class PlannerService {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  static const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  static const dayIndexes = [1, 2, 3, 4, 5, 6];
+  static const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  static const dayIndexes = [1, 2, 3, 4, 5, 6, 7];
 }

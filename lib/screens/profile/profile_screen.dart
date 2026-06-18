@@ -10,7 +10,10 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:pinput/pinput.dart';
+import '../../services/auto_download_service.dart';
 import '../../services/fcm_service.dart';
+import '../../services/two_step_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
@@ -28,8 +31,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   User? get _user => _auth.currentUser;
 
   Map<String, dynamic> _profile = {};
-  bool _loading        = true;
-  bool _uploadingPhoto = false;
+  bool    _loading        = true;
+  bool    _uploadingPhoto = false;
+  String? _error;
 
   // Live stats
   int _coursesCount     = 0;
@@ -57,46 +61,54 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _loadAll() async {
     if (_user == null) return;
+    if (mounted) setState(() { _loading = true; _error = null; });
     final uid = _user!.uid;
+    try {
+      // Profile doc is critical — failure shows the error/retry screen
+      final doc = await _db.collection('users').doc(uid).get();
+      final data = doc.data() ?? {};
 
-    // Load profile doc
-    final doc = await _db.collection('users').doc(uid).get();
-    final data = doc.data() ?? {};
+      // Stats load in parallel but independently — one failure shows 0, not a blocker
+      QuerySnapshot? timetableSnap, plansSnap, guidesSnap;
+      AggregateQuerySnapshot? followersSnap;
+      await Future.wait([
+        _db.collection('users').doc(uid).collection('timetable').get()
+            .then<void>((v) { timetableSnap = v; }).catchError((_) {}),
+        _db.collection('users').doc(uid).collection('studyPlans').get()
+            .then<void>((v) { plansSnap = v; }).catchError((_) {}),
+        _db.collection('users').doc(uid).collection('studyGuides').get()
+            .then<void>((v) { guidesSnap = v; }).catchError((_) {}),
+        _db.collection('users').doc(uid).collection('followers').count().get()
+            .then<void>((v) { followersSnap = v; }).catchError((_) {}),
+      ]);
 
-    // Load stats concurrently
-    final results = await Future.wait([
-      _db.collection('users').doc(uid).collection('timetable').get(),
-      _db.collection('users').doc(uid).collection('studyPlans').get(),
-      _db.collection('users').doc(uid).collection('studyGuides').get(),
-      _db.collection('users').doc(uid).collection('followers').count().get(),
-    ]);
+      final subjects = (timetableSnap?.docs ?? [])
+          .map((d) => (d.data() as Map<String, dynamic>)['subject'] as String? ?? '')
+          .where((s) => s.isNotEmpty)
+          .toSet();
 
-    // Unique subjects from timetable
-    final subjects = (results[0] as QuerySnapshot)
-        .docs
-        .map((d) => (d.data() as Map<String, dynamic>)['subject'] as String? ?? '')
-        .where((s) => s.isNotEmpty)
-        .toSet();
+      if (mounted) {
+        setState(() {
+          _profile          = data;
+          _coursesCount     = subjects.length;
+          _studyPlansCount  = plansSnap?.docs.length ?? 0;
+          _studyGuidesCount = guidesSnap?.docs.length ?? 0;
+          _followersCount   = followersSnap?.count ?? 0;
 
-    if (mounted) {
-      setState(() {
-        _profile          = data;
-        _coursesCount     = subjects.length;
-        _studyPlansCount  = (results[1] as QuerySnapshot).docs.length;
-        _studyGuidesCount = (results[2] as QuerySnapshot).docs.length;
-        _followersCount   = (results[3] as AggregateQuerySnapshot).count ?? 0;
+          _privacyLastSeen  = data['privacyLastSeen'] as String? ?? 'My contacts';
+          _privacyPhoto     = data['privacyPhoto']    as String? ?? 'My contacts';
+          _privacyGroups    = data['privacyGroups']   as String? ?? 'My contacts';
+          _statusPrivacy    = data['statusPrivacy']   as String? ?? 'My contacts';
+          _readReceipts     = data['readReceipts']    as bool?   ?? true;
+          _notifMessages    = data['notifMessages']   as bool?   ?? true;
+          _notifCalls       = data['notifCalls']      as bool?   ?? true;
+          _notifReminders   = data['notifReminders']  as bool?   ?? true;
 
-        _privacyLastSeen  = data['privacyLastSeen'] as String? ?? 'My contacts';
-        _privacyPhoto     = data['privacyPhoto']    as String? ?? 'My contacts';
-        _privacyGroups    = data['privacyGroups']   as String? ?? 'My contacts';
-        _statusPrivacy    = data['statusPrivacy']   as String? ?? 'My contacts';
-        _readReceipts     = data['readReceipts']    as bool?   ?? true;
-        _notifMessages    = data['notifMessages']   as bool?   ?? true;
-        _notifCalls       = data['notifCalls']      as bool?   ?? true;
-        _notifReminders   = data['notifReminders']  as bool?   ?? true;
-
-        _loading = false;
-      });
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() { _loading = false; _error = 'Could not load profile.'; });
     }
   }
 
@@ -117,8 +129,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _save(Map<String, dynamic> fields) async {
     if (_user == null) return;
-    await _db.collection('users').doc(_user!.uid).update(fields);
-    await _loadAll();
+    try {
+      await _db.collection('users').doc(_user!.uid).update(fields);
+      await _loadAll();
+    } catch (e) {
+      await _loadAll(); // revert any optimistic local state
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not save: ${e.toString().replaceFirst('Exception: ', '')}'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
   }
 
   // ── Photo ─────────────────────────────────────────────────────────────────
@@ -271,6 +294,159 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // ── QR sheet ──────────────────────────────────────────────────────────────
 
+  Future<void> _pickAutoDownload(String type) async {
+    final current = switch (type) {
+      'images' => await AutoDownloadService.getImages(),
+      'videos' => await AutoDownloadService.getVideos(),
+      _        => await AutoDownloadService.getDocs(),
+    };
+    if (!mounted) return;
+    final opts = [
+      ('always',    'Always',        Icons.wifi_rounded),
+      ('wifi_only', 'Wi-Fi only',    Icons.wifi_off_rounded),
+      ('never',     'Never',         Icons.block_rounded),
+    ];
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF0E1829),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(margin: const EdgeInsets.symmetric(vertical: 12),
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: Colors.white.withAlpha(40),
+                  borderRadius: BorderRadius.circular(2))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text('Auto-download ${type[0].toUpperCase()}${type.substring(1)}',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+          for (final o in opts)
+            ListTile(
+              leading: Icon(o.$3, color: o.$1 == current ? const Color(0xFF4F8AFF) : Colors.white54),
+              title: Text(o.$2, style: TextStyle(
+                  color: o.$1 == current ? const Color(0xFF4F8AFF) : Colors.white)),
+              trailing: o.$1 == current
+                  ? const Icon(Icons.check_rounded, color: Color(0xFF4F8AFF)) : null,
+              onTap: () async {
+                switch (type) {
+                  case 'images': await AutoDownloadService.setImages(o.$1);
+                  case 'videos': await AutoDownloadService.setVideos(o.$1);
+                  default:       await AutoDownloadService.setDocs(o.$1);
+                }
+                if (context.mounted) Navigator.pop(context);
+              },
+            ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _manageTwoStep() async {
+    final enabled = await TwoStepService.isEnabled();
+    if (!mounted) return;
+    if (enabled) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: const Color(0xFF0E1829),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Two-step verification', style: TextStyle(color: Colors.white)),
+          content: const Text('PIN is currently enabled.',
+              style: TextStyle(color: Colors.white70)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+            TextButton(onPressed: () => Navigator.pop(context, 'change'),
+                child: const Text('Change PIN', style: TextStyle(color: Color(0xFF4F8AFF)))),
+            TextButton(onPressed: () => Navigator.pop(context, 'disable'),
+                child: const Text('Disable', style: TextStyle(color: Colors.redAccent))),
+          ],
+        ),
+      );
+      if (choice == 'disable') {
+        await TwoStepService.disablePin();
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Two-step verification disabled'),
+          backgroundColor: Color(0xFF0A1A4A),
+        ));
+      } else if (choice == 'change') {
+        await _setPinFlow();
+      }
+    } else {
+      await _setPinFlow();
+    }
+  }
+
+  Future<void> _setPinFlow() async {
+    final ctrl1 = TextEditingController();
+    final ctrl2 = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0E1829),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Set PIN', style: TextStyle(color: Colors.white)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Enter a 6-digit PIN', style: TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 14),
+          Pinput(
+            controller: ctrl1, length: 6, obscureText: true,
+            defaultPinTheme: PinTheme(
+              width: 40, height: 48,
+              textStyle: const TextStyle(color: Colors.white),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(10),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white.withAlpha(30)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text('Confirm PIN', style: TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 8),
+          Pinput(
+            controller: ctrl2, length: 6, obscureText: true,
+            defaultPinTheme: PinTheme(
+              width: 40, height: 48,
+              textStyle: const TextStyle(color: Colors.white),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(10),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white.withAlpha(30)),
+              ),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            onPressed: () async {
+              if (ctrl1.text.length < 6) return;
+              if (ctrl1.text != ctrl2.text) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('PINs do not match'),
+                  backgroundColor: Colors.redAccent,
+                ));
+                return;
+              }
+              await TwoStepService.setPin(ctrl1.text);
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('Two-step verification enabled'),
+                backgroundColor: Color(0xFF0A1A4A),
+              ));
+            },
+            child: const Text('Save', style: TextStyle(color: Color(0xFF4F8AFF))),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showQr() {
     final qrData = _phone.isNotEmpty ? _phone : _user?.uid ?? 'zchat';
     showModalBottomSheet(
@@ -359,7 +535,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF)))
-                  : ListView(
+                  : _error != null
+                      ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                          const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 40),
+                          const SizedBox(height: 12),
+                          Text(_error!, style: TextStyle(color: Colors.white.withAlpha(160)), textAlign: TextAlign.center),
+                          const SizedBox(height: 16),
+                          TextButton(onPressed: _loadAll, child: const Text('Retry', style: TextStyle(color: Color(0xFF4F8AFF)))),
+                        ]))
+                      : ListView(
                       padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
                       children: [
                         _buildAvatarCard().animate().fadeIn(),
@@ -425,6 +609,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                         ]).animate(delay: 100.ms).fadeIn(),
                         const SizedBox(height: 12),
+                        _Section(title: 'STORAGE & DATA', color: const Color(0xFF34D399), children: [
+                          _Row(
+                            icon: Icons.download_rounded,
+                            label: 'Auto-download images',
+                            value: '',
+                            onTap: () => _pickAutoDownload('images'),
+                          ),
+                          _Div(),
+                          _Row(
+                            icon: Icons.video_file_outlined,
+                            label: 'Auto-download videos',
+                            value: '',
+                            onTap: () => _pickAutoDownload('videos'),
+                          ),
+                          _Div(),
+                          _Row(
+                            icon: Icons.insert_drive_file_outlined,
+                            label: 'Auto-download documents',
+                            value: '',
+                            onTap: () => _pickAutoDownload('docs'),
+                          ),
+                        ]).animate(delay: 90.ms).fadeIn(),
+                        const SizedBox(height: 12),
                         _Section(title: 'NOTIFICATIONS', color: const Color(0xFFFBBF24), children: [
                           _ToggleRow(
                             icon: Icons.chat_bubble_outline_rounded,
@@ -460,14 +667,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         _Section(title: 'ACCOUNT', color: const Color(0xFF86EFAC), children: [
                           _Row(icon: Icons.qr_code_rounded,       label: 'My QR Code',  value: '', onTap: _showQr),
                           _Div(),
-                          _Row(icon: Icons.security_rounded, label: 'Two-step verification', value: 'Off', onTap: () {
-                            showDialog(context: context, builder: (_) => AlertDialog(
-                              backgroundColor: const Color(0xFF0E1829),
-                              title: const Text('Two-step verification', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                              content: const Text('Two-step verification adds an extra layer of security to your account. This feature will be available in a future update.', style: TextStyle(color: Colors.white70)),
-                              actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK', style: TextStyle(color: Color(0xFF4F8AFF))))],
-                            ));
-                          }),
+                          _Row(icon: Icons.security_rounded, label: 'Two-step verification', value: '', onTap: _manageTwoStep),
                           _Div(),
                           _Row(icon: Icons.info_outline_rounded, label: 'App version', value: 'v1.0.0', onTap: () {
                             showAboutDialog(

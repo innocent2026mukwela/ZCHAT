@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -14,8 +15,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
 import '../../screens/calls/outgoing_call_screen.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../services/ai_service.dart';
+import '../../services/auto_download_service.dart';
 import '../../services/chat_service.dart';
 import '../../services/presence_service.dart';
 import '../../utils/glass.dart';
@@ -62,6 +69,12 @@ class _ChatScreenState extends State<ChatScreen>
   // Starred messages
   final _starred = <String>{};
   StreamSubscription<Set<String>>? _starredSub;
+
+  // Delete-for-me set (local + loaded from Firestore)
+  final _deletedForMe = <String>{};
+
+  // Chat wallpaper (color int from SharedPreferences)
+  int? _wallpaperColor;
 
   // Search in chat
   bool _searchMode = false;
@@ -140,11 +153,150 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _pickImage({ImageSource source = ImageSource.gallery}) async {
     final picked = await ImagePicker().pickImage(source: source, imageQuality: 75);
     if (picked == null || !mounted) return;
-    final caption = await _showCaptionSheet(File(picked.path));
-    if (caption == null) return; // user dismissed without sending
+    final result = await _showCaptionSheet(File(picked.path));
+    if (result == null) return;
     await ChatService.sendImage(widget.chatId, File(picked.path),
-        caption: caption);
+        caption: result['caption'] as String? ?? '',
+        viewOnce: result['viewOnce'] as bool? ?? false);
     Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+  }
+
+  Future<void> _pickVideo() async {
+    final picked = await ImagePicker().pickVideo(source: ImageSource.gallery,
+        maxDuration: const Duration(minutes: 10));
+    if (picked == null || !mounted) return;
+    try {
+      final file = File(picked.path);
+      final fileName = picked.name;
+      final ref = FirebaseStorage.instance
+          .ref('chat_videos/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}_$fileName');
+      await ref.putFile(file);
+      final url = await ref.getDownloadURL();
+      await ChatService.sendMessage(
+        widget.chatId,
+        '🎥 Video',
+        type: 'video',
+        imageUrl: url,
+      );
+      Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to send video: ${e.toString().replaceFirst("Exception: ", "")}'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
+  Future<void> _pickContact() async {
+    try {
+      final status = await Permission.contacts.request();
+      if (!status.isGranted || !mounted) return;
+      final all = await FlutterContacts.getAll(
+          properties: ContactProperties.allProperties);
+      if (!mounted) return;
+      final selected = await showModalBottomSheet<Contact>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: const Color(0xFF0E1829),
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        builder: (_) => _ContactPickerSheet(contacts: all),
+      );
+      if (selected == null || !mounted) return;
+      final name  = selected.displayName;
+      final phone = selected.phones.isNotEmpty
+          ? selected.phones.first.number
+          : '';
+      await ChatService.sendMessage(
+        widget.chatId,
+        '$name\n$phone',
+        type: 'contact',
+      );
+      Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+    } catch (_) {}
+  }
+
+  static const _kStickers = [
+    '😂','😍','🥰','😎','🤩','😭','🥺','😡',
+    '👍','❤️','🔥','🎉','💯','✨','🙏','👏',
+    '😴','🤔','😅','😇','🤣','💪','🎓','📚',
+    '🏆','⭐','🌟','💡','📝','🎵','🍕','😂',
+  ];
+
+  // Replace 'LIVDSRZULELA96B' with your own Tenor API v1 key in production
+  static const _kTenorKey = 'LIVDSRZULELA96B';
+
+  Future<List<String>> _searchGifs(String query) async {
+    final q = Uri.encodeComponent(query.isEmpty ? 'trending' : query);
+    final url = 'https://api.tenor.com/v1/search?q=$q&key=$_kTenorKey&limit=20&media_filter=minimal';
+    try {
+      final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 6));
+      if (res.statusCode != 200) return [];
+      final body = jsonDecode(res.body) as Map;
+      final results = body['results'] as List? ?? [];
+      return results
+          .map((r) => (((r['media'] as List?)?.first)['gif']?['url'] as String?) ?? '')
+          .where((u) => u.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  void _showGifPicker() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E1829),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => _GifPickerSheet(
+        onSelected: (url) {
+          ChatService.sendMessage(widget.chatId, '🎞️ GIF', type: 'image', imageUrl: url);
+          Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+        },
+        searchGifs: _searchGifs,
+      ),
+    );
+  }
+
+  void _showStickerPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF0E1829),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(margin: const EdgeInsets.symmetric(vertical: 10),
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: Colors.white.withAlpha(40),
+                  borderRadius: BorderRadius.circular(2))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 8, mainAxisSpacing: 8, crossAxisSpacing: 8),
+              itemCount: _kStickers.length,
+              itemBuilder: (_, i) => GestureDetector(
+                onTap: () {
+                  Navigator.pop(context);
+                  ChatService.sendMessage(widget.chatId, _kStickers[i], type: 'sticker');
+                  Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+                },
+                child: Text(_kStickers[i], style: const TextStyle(fontSize: 28),
+                    textAlign: TextAlign.center),
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
   }
 
   void _showAttachSheet() {
@@ -193,6 +345,33 @@ class _ChatScreenState extends State<ChatScreen>
                   _pickDocument();
                 },
               ),
+              _AttachOption(
+                icon: Icons.videocam_rounded,
+                label: 'Video',
+                color: const Color(0xFFF87171),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickVideo();
+                },
+              ),
+              _AttachOption(
+                icon: Icons.gif_box_outlined,
+                label: 'GIF',
+                color: const Color(0xFFA78BFA),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showGifPicker();
+                },
+              ),
+              _AttachOption(
+                icon: Icons.person_rounded,
+                label: 'Contact',
+                color: const Color(0xFF34D399),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickContact();
+                },
+              ),
             ]),
             const SizedBox(height: 8),
           ]),
@@ -215,6 +394,14 @@ class _ChatScreenState extends State<ChatScreen>
     ChatService.markRead(widget.chatId);
     _loadPinnedMessage();
     _loadDisappearing();
+    _loadSummaryDismissed();
+    ChatService.getDeletedForMeIds(widget.chatId).then((ids) {
+      if (mounted) setState(() => _deletedForMe.addAll(ids));
+    });
+    SharedPreferences.getInstance().then((p) {
+      final c = p.getInt('wallpaper_${widget.chatId}');
+      if (mounted && c != null) setState(() => _wallpaperColor = c);
+    });
     WidgetsBinding.instance.addObserver(this);
     PresenceService.setOnline();
 
@@ -315,56 +502,73 @@ class _ChatScreenState extends State<ChatScreen>
   bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
-  // Caption sheet shown before sending an image (gap 7)
-  Future<String?> _showCaptionSheet(File imageFile) {
+  // Caption sheet shown before sending an image — returns {caption, viewOnce}
+  Future<Map<String, dynamic>?> _showCaptionSheet(File imageFile) {
     final ctrl = TextEditingController();
-    return showModalBottomSheet<String>(
+    bool viewOnce = false;
+    return showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom),
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF0E1829),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-          ),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(22)),
-              child: Image.file(imageFile,
-                  height: 280,
-                  width: double.infinity,
-                  fit: BoxFit.cover),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 8, 16),
-              child: Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: ctrl,
-                    autofocus: true,
-                    style: const TextStyle(color: Colors.white, fontSize: 15),
-                    decoration: InputDecoration(
-                      hintText: 'Add a caption…',
-                      hintStyle:
-                          TextStyle(color: Colors.white.withAlpha(100)),
-                      border: InputBorder.none,
-                    ),
-                  ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) {
+          return Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Color(0xFF0E1829),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+              ),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                ClipRRect(
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(22)),
+                  child: Image.file(imageFile,
+                      height: 280,
+                      width: double.infinity,
+                      fit: BoxFit.cover),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.send_rounded,
-                      color: Color(0xFF4F8AFF)),
-                  onPressed: () =>
-                      Navigator.pop(ctx, ctrl.text.trim()),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 10, 8, 16),
+                  child: Row(children: [
+                    IconButton(
+                      tooltip: 'View once',
+                      icon: Icon(
+                        viewOnce ? Icons.timer_rounded : Icons.timer_outlined,
+                        color: viewOnce
+                            ? const Color(0xFF4F8AFF)
+                            : Colors.white54,
+                      ),
+                      onPressed: () => setSt(() => viewOnce = !viewOnce),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: ctrl,
+                        autofocus: false,
+                        style: const TextStyle(color: Colors.white, fontSize: 15),
+                        decoration: InputDecoration(
+                          hintText: viewOnce
+                              ? 'View once — no caption'
+                              : 'Add a caption…',
+                          hintStyle:
+                              TextStyle(color: Colors.white.withAlpha(100)),
+                          border: InputBorder.none,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.send_rounded,
+                          color: Color(0xFF4F8AFF)),
+                      onPressed: () => Navigator.pop(ctx,
+                          {'caption': ctrl.text.trim(), 'viewOnce': viewOnce}),
+                    ),
+                  ]),
                 ),
               ]),
             ),
-          ]),
-        ),
+          );
+        },
       ),
     );
   }
@@ -544,11 +748,21 @@ class _ChatScreenState extends State<ChatScreen>
 
   // ── Smart summary ─────────────────────────────────────────────────────────
 
-  bool get _showSummaryBanner {
-    final name = widget.chatName.toLowerCase();
-    final isGroup = name.contains('group') || name.contains('class') || name.contains('squad');
-    return isGroup && !_summaryDismissed;
+  Future<void> _loadSummaryDismissed() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() => _summaryDismissed =
+          prefs.getBool('summary_dismissed_${widget.chatId}') ?? false);
+    }
   }
+
+  Future<void> _dismissSummaryBanner() async {
+    setState(() => _summaryDismissed = true);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('summary_dismissed_${widget.chatId}', true);
+  }
+
+  bool get _showSummaryBanner => !_isDirect && _unreadCount > 0 && !_summaryDismissed;
 
   void _showSmartSummary() {
     String? summaryText;
@@ -611,7 +825,7 @@ class _ChatScreenState extends State<ChatScreen>
                     child: ElevatedButton(
                       onPressed: () {
                         Navigator.pop(sheetCtx);
-                        setState(() => _summaryDismissed = true);
+                        _dismissSummaryBanner();
                       },
                       style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB)),
                       child: const Text('Mark as read'),
@@ -637,9 +851,18 @@ class _ChatScreenState extends State<ChatScreen>
 
     final lines = snap.docs.reversed.map((d) {
       final data = d.data();
-      final sender = data['senderName'] as String? ?? 'User';
-      final text   = data['text'] as String? ?? '';
-      return '$sender: $text';
+      final sender   = data['senderName'] as String? ?? 'User';
+      final text     = (data['text']     as String? ?? '').trim();
+      final imageUrl = (data['imageUrl'] as String? ?? '').trim();
+      final audioUrl = (data['audioUrl'] as String? ?? '').trim();
+      final content = text.isNotEmpty
+          ? text
+          : imageUrl.isNotEmpty
+              ? '[shared an image]'
+              : audioUrl.isNotEmpty
+                  ? '[sent a voice message]'
+                  : '';
+      return '$sender: $content';
     }).where((l) => l.split(': ').last.trim().isNotEmpty).toList();
 
     if (lines.isEmpty) return '• No messages yet to summarise.';
@@ -687,7 +910,9 @@ class _ChatScreenState extends State<ChatScreen>
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(gradient: kBgGradient),
+        decoration: _wallpaperColor != null
+            ? BoxDecoration(color: Color(_wallpaperColor!))
+            : const BoxDecoration(gradient: kBgGradient),
         child: Stack(children: [
           const GlowOrbs(),
           Column(children: [
@@ -696,8 +921,10 @@ class _ChatScreenState extends State<ChatScreen>
               _SummaryBanner(
                 count: _unreadCount,
                 onTap: _showSmartSummary,
-                onDismiss: () => setState(() => _summaryDismissed = true),
+                onDismiss: _dismissSummaryBanner,
               ),
+            if (_showSummaryBanner && _pinnedMessage != null)
+              Divider(height: 1, thickness: 1, color: Colors.white.withAlpha(12)),
             if (_pinnedMessage != null)
               _PinnedBanner(
                 text: _pinnedMessage!['text'] as String? ?? 'Pinned message',
@@ -836,13 +1063,24 @@ class _ChatScreenState extends State<ChatScreen>
 
   // ── Message list ──────────────────────────────────────────────────────────
 
+  bool get _isNearBottom {
+    if (!_scroll.hasClients) return true;
+    final pos = _scroll.position;
+    return pos.maxScrollExtent - pos.pixels < 200;
+  }
+
   Widget _buildMessages() {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: ChatService.messagesStream(widget.chatId),
       builder: (ctx, snap) {
+        if (snap.hasError) {
+          return Center(child: Text('Could not load messages',
+              style: TextStyle(color: Colors.white.withAlpha(120))));
+        }
         final docs = snap.data ?? [];
         var messages = docs
             .where((d) => d['deleted'] != true)
+            .where((d) => !_deletedForMe.contains(d['id'] as String? ?? ''))
             .map((d) => _Msg.fromFirestore(d, _myUid))
             .where((m) => !_isExpired(m))
             .toList();
@@ -854,8 +1092,8 @@ class _ChatScreenState extends State<ChatScreen>
               .toList();
         }
 
-        // Scroll to bottom when new messages arrive
-        if (snap.hasData) {
+        // Scroll to bottom only when user is already near the bottom
+        if (snap.hasData && _isNearBottom) {
           WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
         }
 
@@ -947,9 +1185,55 @@ class _ChatScreenState extends State<ChatScreen>
           Navigator.pop(context);
           _showMessageInfo(msg);
         } : null,
-        onDelete: () {
+        onDelete: () async {
           Navigator.pop(context);
-          ChatService.deleteMessage(widget.chatId, msg.id);
+          if (msg.sent) {
+            // Sender gets two options: delete for me OR delete for everyone
+            final choice = await showDialog<String>(
+              context: context,
+              builder: (_) => AlertDialog(
+                backgroundColor: const Color(0xFF0E1829),
+                title: const Text('Delete message?', style: TextStyle(color: Colors.white)),
+                content: Text('Choose how to delete this message.',
+                    style: TextStyle(color: Colors.white.withAlpha(180))),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+                  TextButton(onPressed: () => Navigator.pop(context, 'me'),
+                      child: const Text('Delete for me', style: TextStyle(color: Colors.orangeAccent))),
+                  TextButton(onPressed: () => Navigator.pop(context, 'everyone'),
+                      child: const Text('Delete for everyone', style: TextStyle(color: Colors.redAccent))),
+                ],
+              ),
+            );
+            if (choice == 'everyone') {
+              await ChatService.deleteMessage(widget.chatId, msg.id);
+            } else if (choice == 'me') {
+              await ChatService.deleteForMe(widget.chatId, msg.id);
+              if (mounted) setState(() => _deletedForMe.add(msg.id));
+            }
+          } else {
+            // Received message: only "delete for me"
+            final ok = await showDialog<bool>(
+              context: context,
+              builder: (_) => AlertDialog(
+                backgroundColor: const Color(0xFF0E1829),
+                title: const Text('Delete message?', style: TextStyle(color: Colors.white)),
+                content: Text('This will delete the message for you only.',
+                    style: TextStyle(color: Colors.white.withAlpha(180))),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+                  TextButton(onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Delete for me', style: TextStyle(color: Colors.redAccent))),
+                ],
+              ),
+            );
+            if (ok == true) {
+              await ChatService.deleteForMe(widget.chatId, msg.id);
+              if (mounted) setState(() => _deletedForMe.add(msg.id));
+            }
+          }
         },
       ),
     );
@@ -1178,6 +1462,10 @@ class _ChatScreenState extends State<ChatScreen>
                               ),
                             ),
                             IconButton(
+                                icon: Icon(Icons.emoji_emotions_outlined,
+                                    color: Colors.white.withAlpha(160), size: 22),
+                                onPressed: _showStickerPicker),
+                            IconButton(
                                 icon: Icon(Icons.attach_file_rounded,
                                     color: Colors.white.withAlpha(160), size: 22),
                                 onPressed: _showAttachSheet),
@@ -1370,8 +1658,11 @@ class _Bubble extends StatelessWidget {
   }
 
   Widget _bubbleContent() {
-    if (msg.isImage) return _ImageBubble(msg: msg);
-    if (msg.isVoice) return _VoiceBubble(msg: msg);
+    if (msg.isImage)   return _ImageBubble(msg: msg);
+    if (msg.isVoice)   return _VoiceBubble(msg: msg);
+    if (msg.isVideo)   return _VideoBubble(msg: msg);
+    if (msg.isSticker) return _StickerBubble(msg: msg);
+    if (msg.isContact) return _ContactBubble(msg: msg);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
@@ -1421,65 +1712,23 @@ class _Bubble extends StatelessWidget {
 
 // ── Image bubble ──────────────────────────────────────────────────────────────
 
-class _ImageBubble extends StatelessWidget {
+class _ImageBubble extends StatefulWidget {
   final _Msg msg;
   const _ImageBubble({required this.msg});
+  @override
+  State<_ImageBubble> createState() => _ImageBubbleState();
+}
+
+class _ImageBubbleState extends State<_ImageBubble> {
+  bool _autoLoad = true;
+  bool _userTapped = false;
 
   @override
-  Widget build(BuildContext context) {
-    return Stack(
-      alignment: Alignment.bottomRight,
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(msg.sent ? 16 : 4),
-            bottomRight: Radius.circular(msg.sent ? 4 : 16),
-          ),
-          child: msg.imageUrl != null && msg.imageUrl!.isNotEmpty
-              ? GestureDetector(
-                  onTap: () => _showFullImage(context, msg.imageUrl!),
-                  child: Image.network(
-                    msg.imageUrl!,
-                    width: 220, height: 180,
-                    fit: BoxFit.cover,
-                    loadingBuilder: (_, child, prog) => prog == null
-                        ? child
-                        : Container(
-                            width: 220, height: 180,
-                            color: Colors.black26,
-                            child: Center(child: CircularProgressIndicator(
-                              value: prog.expectedTotalBytes != null
-                                  ? prog.cumulativeBytesLoaded /
-                                    prog.expectedTotalBytes!
-                                  : null,
-                              color: Colors.white54, strokeWidth: 2,
-                            )),
-                          ),
-                    errorBuilder: (ctx2, err, st) => Container(
-                      width: 220, height: 100,
-                      color: Colors.black26,
-                      child: const Icon(Icons.broken_image_outlined,
-                          color: Colors.white54, size: 36),
-                    ),
-                  ),
-                )
-              : Container(
-                  width: 220, height: 120,
-                  color: Colors.black26,
-                  child: const Center(
-                    child: Icon(Icons.image_rounded,
-                        color: Colors.white54, size: 40),
-                  ),
-                ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(6),
-          child: _TimeRow(msg: msg, onDark: true),
-        ),
-      ],
-    );
+  void initState() {
+    super.initState();
+    AutoDownloadService.getImages().then((pref) {
+      if (mounted) setState(() => _autoLoad = pref != 'never');
+    });
   }
 
   void _showFullImage(BuildContext context, String url) {
@@ -1497,7 +1746,148 @@ class _ImageBubble extends StatelessWidget {
           ),
         ),
       ),
-    ));
+    )).then((_) {
+      // Mark view-once as seen after the full-screen viewer closes
+      if (widget.msg.viewOnce && !widget.msg.viewOnceViewed && !widget.msg.sent) {
+        final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+        FirebaseFirestore.instance
+            .collection('chats').doc(widget.msg.chatId)
+            .collection('messages').doc(widget.msg.id)
+            .update({'viewOnceViewedBy': FieldValue.arrayUnion([myUid])});
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final msg = widget.msg;
+
+    // View-once: sender sees a clock badge; recipient sees "opened" after viewing
+    if (msg.viewOnce) {
+      if (msg.sent) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.timer_rounded, color: Colors.white70, size: 18),
+            const SizedBox(width: 6),
+            const Text('View once', style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(width: 8),
+            _TimeRow(msg: msg, onDark: false),
+          ]),
+        );
+      }
+      if (msg.viewOnceViewed) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.timer_off_rounded, color: Colors.white38, size: 18),
+            const SizedBox(width: 6),
+            Text('Photo opened', style: TextStyle(color: Colors.white.withAlpha(100), fontSize: 13)),
+            const SizedBox(width: 8),
+            _TimeRow(msg: msg, onDark: false),
+          ]),
+        );
+      }
+      // Not yet viewed — show tap-to-view badge
+      return GestureDetector(
+        onTap: () {
+          if (msg.imageUrl != null && msg.imageUrl!.isNotEmpty) {
+            _showFullImage(context, msg.imageUrl!);
+          }
+        },
+        child: Stack(alignment: Alignment.bottomRight, children: [
+          Container(
+            width: 220, height: 180,
+            decoration: BoxDecoration(
+              color: Colors.black45,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.timer_rounded, color: Color(0xFF4F8AFF), size: 40),
+                SizedBox(height: 8),
+                Text('Tap to view once',
+                    style: TextStyle(color: Colors.white, fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+          Padding(padding: const EdgeInsets.all(6), child: _TimeRow(msg: msg, onDark: true)),
+        ]),
+      );
+    }
+
+    final show = _autoLoad || _userTapped;
+    return Stack(
+      alignment: Alignment.bottomRight,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(msg.sent ? 16 : 4),
+            bottomRight: Radius.circular(msg.sent ? 4 : 16),
+          ),
+          child: msg.imageUrl != null && msg.imageUrl!.isNotEmpty
+              ? show
+                ? GestureDetector(
+                    onTap: () => _showFullImage(context, msg.imageUrl!),
+                    child: Image.network(
+                      msg.imageUrl!,
+                      width: 220, height: 180,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (_, child, prog) => prog == null
+                          ? child
+                          : Container(
+                              width: 220, height: 180,
+                              color: Colors.black26,
+                              child: Center(child: CircularProgressIndicator(
+                                value: prog.expectedTotalBytes != null
+                                    ? prog.cumulativeBytesLoaded /
+                                      prog.expectedTotalBytes!
+                                    : null,
+                                color: Colors.white54, strokeWidth: 2,
+                              )),
+                            ),
+                      errorBuilder: (ctx2, err, st) => Container(
+                        width: 220, height: 100,
+                        color: Colors.black26,
+                        child: const Icon(Icons.broken_image_outlined,
+                            color: Colors.white54, size: 36),
+                      ),
+                    ),
+                  )
+                : GestureDetector(
+                    onTap: () => setState(() => _userTapped = true),
+                    child: Container(
+                      width: 220, height: 180,
+                      color: Colors.black26,
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.download_rounded, color: Colors.white54, size: 36),
+                          SizedBox(height: 6),
+                          Text('Tap to load',
+                              style: TextStyle(color: Colors.white54, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  )
+              : Container(
+                  width: 220, height: 120,
+                  color: Colors.black26,
+                  child: const Center(
+                    child: Icon(Icons.image_rounded, color: Colors.white54, size: 40),
+                  ),
+                ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(6),
+          child: _TimeRow(msg: msg, onDark: true),
+        ),
+      ],
+    );
   }
 }
 
@@ -1516,6 +1906,7 @@ class _VoiceBubbleState extends State<_VoiceBubble> {
   bool   _playing  = false;
   double _progress = 0;
   String _posLabel = '0:00';
+  double _speed    = 1.0;
 
   @override
   void initState() {
@@ -1555,9 +1946,16 @@ class _VoiceBubbleState extends State<_VoiceBubble> {
       if (_player.processingState == ProcessingState.idle) {
         await _player.setUrl(url);
       }
+      await _player.setSpeed(_speed);
       await _player.play();
       setState(() => _playing = true);
     }
+  }
+
+  Future<void> _cycleSpeed() async {
+    final next = _speed == 1.0 ? 1.5 : _speed == 1.5 ? 2.0 : 1.0;
+    await _player.setSpeed(next);
+    setState(() => _speed = next);
   }
 
   @override
@@ -1612,8 +2010,214 @@ class _VoiceBubbleState extends State<_VoiceBubble> {
               ],
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
+          GestureDetector(
+            onTap: _cycleSpeed,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(20),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                _speed == 1.0 ? '1×' : _speed == 1.5 ? '1.5×' : '2×',
+                style: const TextStyle(color: Colors.white, fontSize: 11,
+                    fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
           _TimeRow(msg: widget.msg),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Video bubble ─────────────────────────────────────────────────────────────
+
+class _VideoBubble extends StatefulWidget {
+  final _Msg msg;
+  const _VideoBubble({required this.msg});
+
+  @override
+  State<_VideoBubble> createState() => _VideoBubbleState();
+}
+
+class _VideoBubbleState extends State<_VideoBubble> {
+  bool _showPlayer  = false;
+  bool _autoLoad    = true;
+  bool _userTapped  = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AutoDownloadService.getVideos().then((pref) {
+      if (mounted) setState(() => _autoLoad = pref != 'never');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url = widget.msg.imageUrl ?? '';
+    final loadAllowed = _autoLoad || _userTapped;
+    return GestureDetector(
+      onTap: () {
+        if (!loadAllowed) {
+          setState(() => _userTapped = true);
+        } else if (url.isNotEmpty) {
+          setState(() => _showPlayer = true);
+        }
+      },
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: 220, height: 140,
+            decoration: BoxDecoration(
+              color: Colors.black87,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: _showPlayer && url.isNotEmpty
+                ? _VideoPlayerWidget(url: url)
+                : Center(child: Icon(
+                    loadAllowed ? Icons.videocam_rounded : Icons.download_rounded,
+                    color: Colors.white54, size: 48)),
+          ),
+          if (!_showPlayer)
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: Colors.black.withAlpha(140),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                loadAllowed ? Icons.play_arrow_rounded : Icons.download_rounded,
+                color: Colors.white, size: 34),
+            ),
+          if (!loadAllowed && !_showPlayer)
+            const Positioned(
+              bottom: 28,
+              child: Text('Tap to load',
+                  style: TextStyle(color: Colors.white54, fontSize: 11)),
+            ),
+          Positioned(
+            bottom: 6, right: 8,
+            child: _TimeRow(msg: widget.msg),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VideoPlayerWidget extends StatefulWidget {
+  final String url;
+  const _VideoPlayerWidget({required this.url});
+
+  @override
+  State<_VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
+}
+
+class _VideoPlayerWidgetState extends State<_VideoPlayerWidget> {
+  late final VideoPlayerController _ctrl;
+  bool _initialised = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = VideoPlayerController.networkUrl(Uri.parse(widget.url))
+      ..initialize().then((_) {
+        if (mounted) { setState(() => _initialised = true); _ctrl.play(); }
+      });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_initialised) {
+      return const Center(child: SizedBox(
+        width: 24, height: 24,
+        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+      ));
+    }
+    return AspectRatio(
+      aspectRatio: _ctrl.value.aspectRatio,
+      child: VideoPlayer(_ctrl),
+    );
+  }
+}
+
+// ── Sticker bubble ───────────────────────────────────────────────────────────
+
+class _StickerBubble extends StatelessWidget {
+  final _Msg msg;
+  const _StickerBubble({required this.msg});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(msg.text, style: const TextStyle(fontSize: 52)),
+        const SizedBox(height: 2),
+        _TimeRow(msg: msg),
+      ],
+    ),
+  );
+}
+
+// ── Contact card bubble ───────────────────────────────────────────────────────
+
+class _ContactBubble extends StatelessWidget {
+  final _Msg msg;
+  const _ContactBubble({required this.msg});
+
+  @override
+  Widget build(BuildContext context) {
+    // text is stored as "Name\nphone"
+    final parts = msg.text.split('\n');
+    final name  = parts.isNotEmpty ? parts[0] : 'Contact';
+    final phone = parts.length > 1 ? parts[1] : '';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(
+              color: const Color(0xFF4F8AFF).withAlpha(40),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.person_rounded,
+                color: Color(0xFF4F8AFF), size: 22),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(name,
+                    style: const TextStyle(color: Colors.white,
+                        fontWeight: FontWeight.w600, fontSize: 14)),
+                if (phone.isNotEmpty)
+                  Text(phone,
+                      style: TextStyle(
+                          color: Colors.white.withAlpha(160), fontSize: 12)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _TimeRow(msg: msg),
         ],
       ),
     );
@@ -2021,7 +2625,13 @@ class _Msg {
   final bool read;
   final bool isImage;
   final bool isVoice;
+  final bool isVideo;
+  final bool isSticker;
+  final bool isContact;
   final bool edited;
+  final bool viewOnce;
+  final bool viewOnceViewed;
+  final String chatId;
   final String? imageUrl;
   final String? audioUrl;
   final String? imageLabel;
@@ -2039,7 +2649,13 @@ class _Msg {
     required this.read,
     this.isImage = false,
     this.isVoice = false,
+    this.isVideo = false,
+    this.isSticker = false,
+    this.isContact = false,
     this.edited = false,
+    this.viewOnce = false,
+    this.viewOnceViewed = false,
+    this.chatId = '',
     this.imageUrl,
     this.audioUrl,
     this.imageLabel,
@@ -2052,9 +2668,12 @@ class _Msg {
 
   _Msg copyWith({Map<String, int>? reactions}) => _Msg(
     id: id, text: text, sent: sent, time: time, read: read,
-    isImage: isImage, isVoice: isVoice, edited: edited, imageUrl: imageUrl,
-    audioUrl: audioUrl, imageLabel: imageLabel, senderName: senderName,
-    voiceDuration: voiceDuration, replyTo: replyTo,
+    isImage: isImage, isVoice: isVoice, isVideo: isVideo,
+    isSticker: isSticker, isContact: isContact,
+    edited: edited, viewOnce: viewOnce, viewOnceViewed: viewOnceViewed,
+    chatId: chatId,
+    imageUrl: imageUrl, audioUrl: audioUrl, imageLabel: imageLabel,
+    senderName: senderName, voiceDuration: voiceDuration, replyTo: replyTo,
     reactions: reactions ?? this.reactions,
     createdAt: createdAt,
   );
@@ -2088,16 +2707,23 @@ class _Msg {
       sent:          d['senderUid'] == myUid,
       time:          '$h:$m',
       read:          readBy.any((uid) => uid != myUid),
-      isImage:       type == 'image',
-      isVoice:       type == 'voice',
-      edited:        (d['edited'] as bool?) == true,
-      imageUrl:      d['imageUrl'] as String?,
-      audioUrl:      d['audioUrl'] as String?,
-      voiceDuration: d['voiceDuration'] as String? ?? (type == 'voice' ? '0:00' : null),
-      senderName:    d['senderName'] as String?,
-      replyTo:       replyTo,
-      reactions:     reactions.isEmpty ? null : reactions,
-      createdAt:     ts?.toDate(),
+      isImage:         type == 'image',
+      isVoice:         type == 'voice',
+      isVideo:         type == 'video',
+      isSticker:       type == 'sticker',
+      isContact:       type == 'contact',
+      edited:          (d['edited'] as bool?) == true,
+      viewOnce:        (d['viewOnce'] as bool?) == true,
+      viewOnceViewed:  List<String>.from(
+          d['viewOnceViewedBy'] as List? ?? []).contains(myUid),
+      chatId:          d['chatId'] as String? ?? '',
+      imageUrl:        d['imageUrl'] as String?,
+      audioUrl:        d['audioUrl'] as String?,
+      voiceDuration:   d['voiceDuration'] as String? ?? (type == 'voice' ? '0:00' : null),
+      senderName:      d['senderName'] as String?,
+      replyTo:         replyTo,
+      reactions:       reactions.isEmpty ? null : reactions,
+      createdAt:       ts?.toDate(),
     );
   }
 }
@@ -2502,12 +3128,330 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
       ),
     );
     if (confirmed != true) return;
-    await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).update({
-      'memberUids': FieldValue.arrayRemove([uid]),
-    });
+    await ChatService.removeGroupMember(widget.chatId, uid);
     if (mounted) {
-      setState(() => _groupMembers.removeWhere((m) => m['uid'] == uid));
+      setState(() {
+        _groupMembers.removeWhere((m) => m['uid'] == uid);
+        _adminUids.remove(uid);
+      });
     }
+  }
+
+  Future<void> _addMember() async {
+    // Search ZCHAT users by name/phone
+    final ctrl = TextEditingController();
+    List<Map<String, dynamic>> results = [];
+    final existingUids = _groupMembers.map((m) => m['uid'] as String).toSet();
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          backgroundColor: const Color(0xFF0E1829),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Add member', style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(
+                controller: ctrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Search by name or phone',
+                  hintStyle: TextStyle(color: Colors.white.withAlpha(60)),
+                  filled: true,
+                  fillColor: Colors.white.withAlpha(10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  prefixIcon: const Icon(Icons.search_rounded, color: Colors.white54),
+                ),
+                onChanged: (q) async {
+                  if (q.trim().length < 2) { setS(() => results = []); return; }
+                  final snap = await FirebaseFirestore.instance
+                      .collection('users')
+                      .orderBy('fullName')
+                      .startAt([q.trim()]).endAt(['${q.trim()}'])
+                      .limit(10).get();
+                  final filtered = snap.docs
+                      .map((d) => {'uid': d.id, ...d.data()})
+                      .where((u) => !existingUids.contains(u['uid']))
+                      .toList();
+                  setS(() => results = filtered);
+                },
+              ),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 240),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: results.length,
+                  itemBuilder: (_, i) {
+                    final u    = results[i];
+                    final name = u['fullName'] as String? ?? u['phoneNumber'] as String? ?? 'Unknown';
+                    final photo = u['photoUrl'] as String? ?? '';
+                    return ListTile(
+                      leading: CircleAvatar(
+                        radius: 18,
+                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundImage: photo.isNotEmpty ? NetworkImage(photo) : null,
+                        child: photo.isEmpty
+                            ? Text(name.substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.white))
+                            : null,
+                      ),
+                      title: Text(name, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        await ChatService.addGroupMember(widget.chatId, u['uid'] as String, name);
+                        await _loadGroupInfo();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('$name added to group'),
+                            backgroundColor: const Color(0xFF0A1A4A),
+                          ));
+                        }
+                      },
+                    );
+                  },
+                ),
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleAdmin(String uid, bool isCurrentlyAdmin) async {
+    if (isCurrentlyAdmin) {
+      await ChatService.demoteAdmin(widget.chatId, uid);
+      if (mounted) setState(() => _adminUids.remove(uid));
+    } else {
+      await ChatService.promoteAdmin(widget.chatId, uid);
+      if (mounted) setState(() => _adminUids.add(uid));
+    }
+  }
+
+  Future<void> _editGroupDescription() async {
+    final doc = await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).get();
+    final current = doc.data()?['description'] as String? ?? '';
+    final ctrl = TextEditingController(text: current);
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0E1829),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Group description', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: ctrl,
+          maxLines: 3,
+          maxLength: 200,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Enter a description…',
+            hintStyle: TextStyle(color: Colors.white.withAlpha(60)),
+            filled: true,
+            fillColor: Colors.white.withAlpha(10),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+            counterStyle: TextStyle(color: Colors.white.withAlpha(80)),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(
+            onPressed: () async {
+              await ChatService.setGroupDescription(widget.chatId, ctrl.text.trim());
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Save', style: TextStyle(color: Color(0xFF4F8AFF))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickWallpaper() async {
+    const colors = [
+      0xFF0A1628, 0xFF1A0A28, 0xFF0A2818, 0xFF280A0A,
+      0xFF0A1E3D, 0xFF1A1000, 0xFF001A1A, 0xFF1A001A,
+    ];
+    const labels = [
+      'Dark Blue', 'Dark Purple', 'Dark Green', 'Dark Red',
+      'Navy',      'Dark Brown',  'Dark Teal',  'Dark Magenta',
+    ];
+    final prefs = await SharedPreferences.getInstance();
+    final current = prefs.getInt('wallpaper_${widget.chatId}');
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF0E1829),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Chat wallpaper', style: TextStyle(color: Colors.white)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Wrap(
+            spacing: 12, runSpacing: 12,
+            children: List.generate(colors.length, (i) {
+              final selected = current == colors[i];
+              return GestureDetector(
+                onTap: () async {
+                  await prefs.setInt('wallpaper_${widget.chatId}', colors[i]);
+                  if (context.mounted) Navigator.pop(context);
+                },
+                child: Tooltip(
+                  message: labels[i],
+                  child: Container(
+                    width: 48, height: 48,
+                    decoration: BoxDecoration(
+                      color: Color(colors[i]),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: selected ? const Color(0xFF4F8AFF) : Colors.white.withAlpha(30),
+                        width: selected ? 3 : 1,
+                      ),
+                    ),
+                    child: selected
+                        ? const Icon(Icons.check_rounded, color: Colors.white, size: 22)
+                        : null,
+                  ),
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 12),
+          TextButton.icon(
+            onPressed: () async {
+              await prefs.remove('wallpaper_${widget.chatId}');
+              if (context.mounted) Navigator.pop(context);
+            },
+            icon: const Icon(Icons.restore_rounded, size: 16, color: Colors.white54),
+            label: const Text('Reset to default', style: TextStyle(color: Colors.white54)),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _shareInviteLink() async {
+    final doc = await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).get();
+    String token = doc.data()?['inviteToken'] as String? ?? '';
+    if (token.isEmpty) {
+      token = '${widget.chatId}_${DateTime.now().millisecondsSinceEpoch}';
+      await ChatService.setGroupInviteToken(widget.chatId, token);
+    }
+    final link = 'zchat://join?chatId=${widget.chatId}&token=$token';
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF0E1829),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Invite link', style: TextStyle(color: Colors.white)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white.withAlpha(10),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(link, style: TextStyle(color: Colors.white.withAlpha(180), fontSize: 12)),
+          ),
+          const SizedBox(height: 12),
+          const Text('Share this link so others can join the group.',
+              style: TextStyle(color: Colors.white54, fontSize: 12)),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: link));
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('Link copied to clipboard'),
+                backgroundColor: Color(0xFF0A1A4A),
+              ));
+            },
+            child: const Text('Copy link', style: TextStyle(color: Color(0xFF4F8AFF))),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              final smsUri = Uri.parse('sms:?body=${Uri.encodeComponent('Join my group on ZCHAT: $link')}');
+              if (await canLaunchUrl(smsUri)) await launchUrl(smsUri);
+            },
+            child: const Text('Share via SMS', style: TextStyle(color: Color(0xFF86EFAC))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _reportContact() async {
+    final reasons = ['Spam', 'Harassment', 'Fake account', 'Inappropriate content', 'Other'];
+    String? selected;
+    final ctrl = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => AlertDialog(
+          backgroundColor: const Color(0xFF0E1829),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Report', style: TextStyle(color: Colors.white)),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            ...reasons.map((r) => RadioListTile<String>(
+              value: r, groupValue: selected,
+              activeColor: const Color(0xFF4F8AFF),
+              title: Text(r, style: const TextStyle(color: Colors.white, fontSize: 14)),
+              onChanged: (v) => setS(() => selected = v),
+            )),
+            const SizedBox(height: 8),
+            TextField(
+              controller: ctrl,
+              maxLines: 2,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Additional details (optional)',
+                hintStyle: TextStyle(color: Colors.white.withAlpha(60)),
+                filled: true,
+                fillColor: Colors.white.withAlpha(10),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+              ),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+            TextButton(
+              onPressed: selected == null ? null : () async {
+                await FirebaseFirestore.instance.collection('reports').add({
+                  'reportedUid':  widget.isGroup ? widget.chatId : widget.otherUid,
+                  'reportedName': widget.name,
+                  'reporterUid':  FirebaseAuth.instance.currentUser?.uid,
+                  'reason':       selected,
+                  'details':      ctrl.text.trim(),
+                  'chatId':       widget.chatId,
+                  'isGroup':      widget.isGroup,
+                  'createdAt':    FieldValue.serverTimestamp(),
+                });
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Report submitted. Thank you.'),
+                  backgroundColor: Color(0xFF0A1A4A),
+                ));
+              },
+              child: const Text('Submit', style: TextStyle(color: Colors.redAccent)),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _toggleBlock() async {
@@ -2624,17 +3568,20 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
               _InfoTile(icon: Icons.info_outline_rounded, title: about, subtitle: 'About'),
               Divider(color: Colors.white.withAlpha(12), height: 28),
             ],
-            // Media strip
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Row(children: [
-                Text('Media, links & docs',
-                  style: TextStyle(color: Colors.white.withAlpha(180), fontWeight: FontWeight.w600, fontSize: 14)),
-                const Spacer(),
-                Text('${_mediaItems.length}',
-                    style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 13)),
-                const Icon(Icons.chevron_right_rounded, color: Color(0xFF4F8AFF), size: 18),
-              ]),
+            // Media strip — tap header to open full gallery
+            GestureDetector(
+              onTap: () => _MediaGallerySheet.show(context, widget.chatId),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Row(children: [
+                  Text('Media, links & docs',
+                    style: TextStyle(color: Colors.white.withAlpha(180), fontWeight: FontWeight.w600, fontSize: 14)),
+                  const Spacer(),
+                  Text('${_mediaItems.length}',
+                      style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 13)),
+                  const Icon(Icons.chevron_right_rounded, color: Color(0xFF4F8AFF), size: 18),
+                ]),
+              ),
             ),
             SizedBox(
               height: 80,
@@ -2648,21 +3595,24 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       itemCount: _mediaItems.length,
-                      itemBuilder: (_, i) => Container(
-                        width: 80, height: 80,
-                        margin: const EdgeInsets.only(right: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withAlpha(12),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Image.network(
-                            _mediaItems[i]['imageUrl'] as String,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, e, s) => Icon(
-                                Icons.image_outlined,
-                                color: Colors.white.withAlpha(60), size: 30),
+                      itemBuilder: (_, i) => GestureDetector(
+                        onTap: () => _MediaGallerySheet.show(context, widget.chatId),
+                        child: Container(
+                          width: 80, height: 80,
+                          margin: const EdgeInsets.only(right: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withAlpha(12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.network(
+                              _mediaItems[i]['imageUrl'] as String,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, e, s) => Icon(
+                                  Icons.image_outlined,
+                                  color: Colors.white.withAlpha(60), size: 30),
+                            ),
                           ),
                         ),
                       ),
@@ -2670,14 +3620,65 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
             ),
             Divider(color: Colors.white.withAlpha(12), height: 28),
 
+            // ── Group description ──────────────────────────────────────────
+            if (widget.isGroup) ...[
+              FutureBuilder<DocumentSnapshot>(
+                future: FirebaseFirestore.instance.collection('chats').doc(widget.chatId).get(),
+                builder: (_, snap) {
+                  final desc = snap.data?.data() != null
+                      ? (snap.data!.data() as Map<String, dynamic>)['description'] as String? ?? ''
+                      : '';
+                  final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+                  final iAmAdmin = _adminUids.contains(myUid);
+                  if (desc.isEmpty && !iAmAdmin) return const SizedBox.shrink();
+                  return ListTile(
+                    leading: const Icon(Icons.info_outline_rounded, color: Colors.white70),
+                    title: Text(
+                      desc.isEmpty ? 'Add group description' : desc,
+                      style: TextStyle(
+                        color: desc.isEmpty ? Colors.white.withAlpha(80) : Colors.white,
+                        fontSize: 14,
+                        fontStyle: desc.isEmpty ? FontStyle.italic : FontStyle.normal,
+                      ),
+                    ),
+                    trailing: iAmAdmin
+                        ? IconButton(
+                            icon: const Icon(Icons.edit_outlined, color: Color(0xFF4F8AFF), size: 18),
+                            onPressed: _editGroupDescription,
+                          )
+                        : null,
+                  );
+                },
+              ),
+              Divider(color: Colors.white.withAlpha(12), height: 8),
+            ],
+
             // ── Group members ──────────────────────────────────────────────
-            if (widget.isGroup && _groupMembers.isNotEmpty) ...[
+            if (widget.isGroup) ...[
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                 child: Row(children: [
                   Text('${_groupMembers.length} members',
                     style: TextStyle(color: Colors.white.withAlpha(180),
                         fontWeight: FontWeight.w600, fontSize: 14)),
+                  const Spacer(),
+                  if (_adminUids.contains(FirebaseAuth.instance.currentUser?.uid))
+                    GestureDetector(
+                      onTap: _addMember,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF4F8AFF).withAlpha(30),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80)),
+                        ),
+                        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.person_add_outlined, color: Color(0xFF4F8AFF), size: 15),
+                          SizedBox(width: 4),
+                          Text('Add', style: TextStyle(color: Color(0xFF4F8AFF), fontSize: 12, fontWeight: FontWeight.w600)),
+                        ]),
+                      ),
+                    ),
                 ]),
               ),
               ..._groupMembers.map((m) {
@@ -2702,13 +3703,24 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
                   title: Text(isMe ? 'You' : name,
                       style: const TextStyle(color: Colors.white, fontSize: 14)),
                   subtitle: isAdmin
-                      ? Text('Admin', style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12))
+                      ? Text('Admin', style: TextStyle(color: const Color(0xFF4F8AFF).withAlpha(200), fontSize: 12))
                       : null,
                   trailing: (iAmAdmin && !isMe)
-                      ? IconButton(
-                          icon: const Icon(Icons.remove_circle_outline_rounded,
-                              color: Colors.redAccent, size: 20),
-                          onPressed: () => _removeMember(uid),
+                      ? PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert_rounded, color: Colors.white54, size: 20),
+                          color: const Color(0xFF0E1829),
+                          onSelected: (v) {
+                            if (v == 'remove') _removeMember(uid);
+                            if (v == 'promote' || v == 'demote') _toggleAdmin(uid, isAdmin);
+                          },
+                          itemBuilder: (_) => [
+                            PopupMenuItem(value: isAdmin ? 'demote' : 'promote',
+                              child: Text(isAdmin ? 'Remove admin' : 'Make admin',
+                                  style: const TextStyle(color: Colors.white))),
+                            const PopupMenuItem(value: 'remove',
+                              child: Text('Remove from group',
+                                  style: TextStyle(color: Colors.redAccent))),
+                          ],
                         )
                       : null,
                 );
@@ -2837,6 +3849,21 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
 
             Divider(color: Colors.white.withAlpha(12), height: 28),
 
+            // ── Group invite link ──────────────────────────────────────────
+            if (widget.isGroup)
+              ListTile(
+                leading: const Icon(Icons.link_rounded, color: Colors.white70),
+                title: const Text('Invite via link', style: TextStyle(color: Colors.white)),
+                onTap: _shareInviteLink,
+              ),
+
+            // ── Chat wallpaper ─────────────────────────────────────────────
+            ListTile(
+              leading: const Icon(Icons.wallpaper_rounded, color: Colors.white70),
+              title: const Text('Chat wallpaper', style: TextStyle(color: Colors.white)),
+              onTap: _pickWallpaper,
+            ),
+
             // ── Mute / Create group / Block / Delete ───────────────────────
             ListTile(
               leading: Icon(
@@ -2859,6 +3886,13 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
                       extra: {'preselectedUid': widget.otherUid});
                 },
               ),
+
+            ListTile(
+              leading: const Icon(Icons.flag_outlined, color: Colors.orangeAccent),
+              title: Text(widget.isGroup ? 'Report group' : 'Report ${widget.name.split(' ').first}',
+                  style: const TextStyle(color: Colors.orangeAccent)),
+              onTap: _reportContact,
+            ),
 
             if (!widget.isGroup)
               ListTile(
@@ -2890,6 +3924,355 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Full media gallery ────────────────────────────────────────────────────────
+
+class _MediaGallerySheet extends StatefulWidget {
+  final String chatId;
+  const _MediaGallerySheet({required this.chatId});
+
+  static void show(BuildContext context, String chatId) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _MediaGallerySheet(chatId: chatId),
+    );
+  }
+
+  @override
+  State<_MediaGallerySheet> createState() => _MediaGallerySheetState();
+}
+
+class _MediaGallerySheetState extends State<_MediaGallerySheet>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
+  List<Map<String, dynamic>> _images = [];
+  List<Map<String, dynamic>> _docs   = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 2, vsync: this);
+    _load();
+  }
+
+  @override
+  void dispose() { _tabs.dispose(); super.dispose(); }
+
+  Future<void> _load() async {
+    final col = FirebaseFirestore.instance
+        .collection('chats').doc(widget.chatId).collection('messages');
+    final imgSnap = await col.where('type', isEqualTo: 'image').orderBy('createdAt', descending: true).get();
+    final docSnap = await col.where('type', isEqualTo: 'document').orderBy('createdAt', descending: true).get();
+    if (!mounted) return;
+    setState(() {
+      _images  = imgSnap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      _docs    = docSnap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      maxChildSize: 0.95,
+      minChildSize: 0.4,
+      builder: (_, ctrl) => Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF0E1829),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(children: [
+          // Handle
+          Center(child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: Colors.white.withAlpha(40),
+                    borderRadius: BorderRadius.circular(2))),
+          )),
+          const Text('Media & Docs',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          TabBar(
+            controller: _tabs,
+            indicatorColor: const Color(0xFF4F8AFF),
+            labelColor: const Color(0xFF4F8AFF),
+            unselectedLabelColor: Colors.white54,
+            tabs: const [Tab(text: 'Images'), Tab(text: 'Documents')],
+          ),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF)))
+                : TabBarView(controller: _tabs, children: [
+                    // Images tab
+                    _images.isEmpty
+                        ? Center(child: Text('No images yet', style: TextStyle(color: Colors.white.withAlpha(80))))
+                        : GridView.builder(
+                            controller: ctrl,
+                            padding: const EdgeInsets.all(8),
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3, crossAxisSpacing: 4, mainAxisSpacing: 4),
+                            itemCount: _images.length,
+                            itemBuilder: (_, i) {
+                              final url = _images[i]['imageUrl'] as String? ?? '';
+                              return GestureDetector(
+                                onTap: () => _openImage(context, url),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Image.network(url, fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Container(
+                                          color: Colors.white.withAlpha(10),
+                                          child: const Icon(Icons.broken_image_outlined,
+                                              color: Colors.white38))),
+                                ),
+                              );
+                            },
+                          ),
+                    // Documents tab
+                    _docs.isEmpty
+                        ? Center(child: Text('No documents yet', style: TextStyle(color: Colors.white.withAlpha(80))))
+                        : ListView.builder(
+                            controller: ctrl,
+                            itemCount: _docs.length,
+                            itemBuilder: (_, i) {
+                              final d    = _docs[i];
+                              final name = (d['text'] as String? ?? 'Document').replaceFirst('📄 ', '');
+                              final url  = d['imageUrl'] as String? ?? '';
+                              return ListTile(
+                                leading: Container(
+                                  width: 40, height: 40,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFBBF24).withAlpha(30),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(Icons.insert_drive_file_rounded,
+                                      color: Color(0xFFFBBF24), size: 22),
+                                ),
+                                title: Text(name,
+                                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.open_in_new_rounded,
+                                      color: Color(0xFF4F8AFF), size: 18),
+                                  onPressed: url.isNotEmpty
+                                      ? () => launchUrl(Uri.parse(url),
+                                          mode: LaunchMode.externalApplication)
+                                      : null,
+                                ),
+                              );
+                            },
+                          ),
+                  ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  void _openImage(BuildContext context, String url) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: InteractiveViewer(
+            child: Image.network(url, fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) =>
+                    const Icon(Icons.broken_image_outlined, color: Colors.white38, size: 60)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── GIF picker sheet ──────────────────────────────────────────────────────────
+
+class _GifPickerSheet extends StatefulWidget {
+  final void Function(String url) onSelected;
+  final Future<List<String>> Function(String query) searchGifs;
+  const _GifPickerSheet({required this.onSelected, required this.searchGifs});
+
+  @override
+  State<_GifPickerSheet> createState() => _GifPickerSheetState();
+}
+
+class _GifPickerSheetState extends State<_GifPickerSheet> {
+  final _ctrl  = TextEditingController();
+  List<String> _urls    = [];
+  bool         _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetch('');
+  }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  Future<void> _fetch(String q) async {
+    setState(() => _loading = true);
+    final results = await widget.searchGifs(q);
+    if (mounted) setState(() { _urls = results; _loading = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: MediaQuery.of(context).size.height * 0.6,
+      child: Column(children: [
+        Container(margin: const EdgeInsets.symmetric(vertical: 10),
+            width: 40, height: 4,
+            decoration: BoxDecoration(color: Colors.white.withAlpha(40),
+                borderRadius: BorderRadius.circular(2))),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: TextField(
+            controller: _ctrl,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Search GIFs…',
+              hintStyle: TextStyle(color: Colors.white.withAlpha(60)),
+              filled: true,
+              fillColor: Colors.white.withAlpha(10),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none),
+              prefixIcon: const Icon(Icons.search_rounded, color: Colors.white54),
+              suffixIcon: _ctrl.text.isNotEmpty
+                  ? IconButton(icon: const Icon(Icons.clear, color: Colors.white54),
+                      onPressed: () { _ctrl.clear(); _fetch(''); })
+                  : null,
+            ),
+            onSubmitted: _fetch,
+            textInputAction: TextInputAction.search,
+          ),
+        ),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF)))
+              : _urls.isEmpty
+                  ? Center(child: Text('No GIFs found',
+                      style: TextStyle(color: Colors.white.withAlpha(80))))
+                  : GridView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2, crossAxisSpacing: 4, mainAxisSpacing: 4,
+                          childAspectRatio: 1.6),
+                      itemCount: _urls.length,
+                      itemBuilder: (_, i) => GestureDetector(
+                        onTap: () {
+                          Navigator.pop(context);
+                          widget.onSelected(_urls[i]);
+                        },
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(_urls[i], fit: BoxFit.cover,
+                              loadingBuilder: (_, child, progress) => progress == null
+                                  ? child
+                                  : Container(color: Colors.white.withAlpha(8),
+                                      child: const Center(
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2, color: Color(0xFF4F8AFF))))),
+                        ),
+                      ),
+                    ),
+        ),
+        const SizedBox(height: 16),
+      ]),
+    );
+  }
+}
+
+// ── Contact picker sheet ──────────────────────────────────────────────────────
+
+class _ContactPickerSheet extends StatefulWidget {
+  final List<Contact> contacts;
+  const _ContactPickerSheet({required this.contacts});
+  @override
+  State<_ContactPickerSheet> createState() => _ContactPickerSheetState();
+}
+
+class _ContactPickerSheetState extends State<_ContactPickerSheet> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = widget.contacts.where((c) {
+      final q = _query.toLowerCase();
+      if (q.isEmpty) return true;
+      return (c.displayName ?? '').toLowerCase().contains(q) ||
+          c.phones.any((p) => p.number.contains(q));
+    }).toList();
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (_, scroll) => Column(children: [
+        const SizedBox(height: 12),
+        Container(width: 40, height: 4,
+            decoration: BoxDecoration(color: Colors.white.withAlpha(40),
+                borderRadius: BorderRadius.circular(2))),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: TextField(
+            autofocus: true,
+            onChanged: (v) => setState(() => _query = v),
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Search contacts…',
+              hintStyle: TextStyle(color: Colors.white.withAlpha(80)),
+              prefixIcon: const Icon(Icons.search, color: Colors.white54),
+              filled: true,
+              fillColor: Colors.white.withAlpha(12),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: ListView.builder(
+            controller: scroll,
+            itemCount: filtered.length,
+            itemBuilder: (_, i) {
+              final c = filtered[i];
+              final phone = c.phones.isNotEmpty ? c.phones.first.number : '';
+              return ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: const Color(0xFF1565C0),
+                  child: Text(
+                    (c.displayName?.isNotEmpty == true)
+                        ? c.displayName![0].toUpperCase()
+                        : '?',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+                title: Text(c.displayName ?? '',
+                    style: const TextStyle(color: Colors.white)),
+                subtitle: phone.isNotEmpty
+                    ? Text(phone,
+                        style: TextStyle(
+                            color: Colors.white.withAlpha(140), fontSize: 12))
+                    : null,
+                onTap: () => Navigator.pop(context, c),
+              );
+            },
+          ),
+        ),
+      ]),
     );
   }
 }

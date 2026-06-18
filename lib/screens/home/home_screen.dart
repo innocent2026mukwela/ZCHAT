@@ -108,14 +108,16 @@ class _GlassHomeAppBar extends StatelessWidget {
                         icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
                         color: const Color(0xFF0A1A4A),
                         onSelected: (v) {
-                          if (v == 'profile')  context.push('/profile');
-                          if (v == 'new_group') context.push('/new-group');
-                          if (v == 'starred')  context.push('/starred');
+                          if (v == 'profile')     context.push('/profile');
+                          if (v == 'new_group')   context.push('/new-group');
+                          if (v == 'starred')     context.push('/starred');
+                          if (v == 'broadcasts')  context.push('/broadcasts');
                         },
                         itemBuilder: (_) => [
-                          PopupMenuItem(value: 'new_group',    child: Text('New group',      style: TextStyle(color: Colors.white.withAlpha(220)))),
-                          PopupMenuItem(value: 'starred',      child: Text('Starred messages',style: TextStyle(color: Colors.white.withAlpha(220)))),
-                          PopupMenuItem(value: 'profile',      child: Text('Profile',        style: TextStyle(color: Colors.white.withAlpha(220)))),
+                          PopupMenuItem(value: 'new_group',   child: Text('New group',          style: TextStyle(color: Colors.white.withAlpha(220)))),
+                          PopupMenuItem(value: 'broadcasts',  child: Text('Broadcast channels', style: TextStyle(color: Colors.white.withAlpha(220)))),
+                          PopupMenuItem(value: 'starred',     child: Text('Starred messages',   style: TextStyle(color: Colors.white.withAlpha(220)))),
+                          PopupMenuItem(value: 'profile',     child: Text('Profile',            style: TextStyle(color: Colors.white.withAlpha(220)))),
                         ],
                       ),
                     ],
@@ -181,7 +183,7 @@ class _HomeFabState extends State<_HomeFab> {
   Widget build(BuildContext context) {
     final tab = DefaultTabController.of(context).index;
     final icons  = [Icons.edit_rounded, Icons.camera_alt_rounded, Icons.add_call];
-    final routes = ['/new-chat', '/status', '/new-chat'];
+    final routes = ['/new-chat', '/status', '/calls'];
     return FloatingActionButton(
       backgroundColor: const Color(0xFF2563EB),
       elevation: 8,
@@ -305,11 +307,18 @@ class _ChatsTabState extends State<_ChatsTab> {
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
                     Icon(Icons.chat_bubble_outline_rounded, size: 56, color: Colors.white.withAlpha(40)),
                     const SizedBox(height: 14),
-                    Text(
-                      _query.isNotEmpty ? 'No chats found' : 'No conversations yet\nTap ✏️ to start one',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white.withAlpha(100), fontSize: 15, height: 1.5),
-                    ),
+                    if (_query.isNotEmpty)
+                      Text('No chats found',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white.withAlpha(100), fontSize: 15))
+                    else
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('No conversations yet  Tap ',
+                          style: TextStyle(color: Colors.white.withAlpha(100), fontSize: 15)),
+                        Icon(Icons.edit_rounded, size: 16, color: Colors.white.withAlpha(100)),
+                        Text(' to start one',
+                          style: TextStyle(color: Colors.white.withAlpha(100), fontSize: 15)),
+                      ]),
                   ]),
                 );
               }
@@ -566,7 +575,26 @@ class _ChatOptionsSheet extends StatelessWidget {
       ListTile(
         leading: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
         title: const Text('Delete chat', style: TextStyle(color: Colors.redAccent)),
-        onTap: () { Navigator.pop(context); ChatService.deleteChat(chatId); }),
+        onTap: () async {
+          Navigator.pop(context);
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+              backgroundColor: const Color(0xFF0A1A4A),
+              title: const Text('Delete chat?', style: TextStyle(color: Colors.white)),
+              content: Text('This will delete all messages with $name.',
+                  style: TextStyle(color: Colors.white.withAlpha(180))),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+                ),
+              ],
+            ),
+          );
+          if (ok == true) ChatService.deleteChat(chatId);
+        }),
     ]),
   );
 }
@@ -586,6 +614,7 @@ class _StatusTabState extends State<_StatusTab> {
   List<Map<String, dynamic>> _contactStatuses = [];
   Map<String, dynamic>?      _myProfile;
   bool _loading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -609,8 +638,8 @@ class _StatusTabState extends State<_StatusTab> {
       final uids = await _zchatContactUids();
       final statuses = await StatusService.fetchContactStatuses(uids);
       if (mounted) setState(() { _contactStatuses = statuses; _loading = false; });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _loadError = e.toString().replaceFirst('Exception: ', ''); });
     }
   }
 
@@ -676,6 +705,18 @@ class _StatusTabState extends State<_StatusTab> {
 
           if (_loading)
             const Padding(padding: EdgeInsets.only(top: 40), child: Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF))))
+          else if (_loadError != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 40, 16, 0),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.error_outline_rounded, color: Colors.redAccent.withAlpha(180), size: 36),
+                const SizedBox(height: 10),
+                Text(_loadError!, textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 13)),
+                const SizedBox(height: 12),
+                TextButton(onPressed: _loadContacts, child: const Text('Retry', style: TextStyle(color: Color(0xFF4F8AFF)))),
+              ]),
+            )
           else if (_contactStatuses.isEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 48),
@@ -809,10 +850,14 @@ class _CallsTab extends StatelessWidget {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: CallService.callHistoryStream(),
       builder: (ctx, snap) {
-        final calls = snap.data ?? [];
-        if (!snap.hasData) {
+        if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF)));
         }
+        if (snap.hasError) {
+          return Center(child: Text('Could not load calls',
+              style: TextStyle(color: Colors.white.withAlpha(120))));
+        }
+        final calls = snap.data ?? [];
         if (calls.isEmpty) {
           return Center(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -881,8 +926,9 @@ class _CallsTab extends StatelessWidget {
                   ],
                 )),
                 IconButton(
-                  icon: Icon(isVideo ? Icons.videocam_outlined : Icons.call_outlined,
-                      color: const Color(0xFF4F8AFF), size: 22),
+                  icon: const Icon(Icons.message_outlined,
+                      color: Color(0xFF4F8AFF), size: 22),
+                  tooltip: 'Message',
                   onPressed: () async {
                     final otherUid = isCaller
                         ? call['calleeUid'] as String? ?? ''

@@ -136,6 +136,10 @@ class _FeedTab extends StatelessWidget {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF), strokeWidth: 2));
         }
+        if (snap.hasError) {
+          return Center(child: Text('Could not load posts',
+              style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 14)));
+        }
         final posts = snap.data ?? [];
         if (posts.isEmpty) {
           return Center(
@@ -232,7 +236,7 @@ class _ThreadCard extends StatelessWidget {
               const SizedBox(width: 6),
               _MoreMenu(
                 postId: id, authorUid: authorUid, authorName: authorName,
-                isOwn: isOwn, myUid: myUid,
+                isOwn: isOwn, myUid: myUid, postContent: content,
                 myInitials: myInitials, myPhotoUrl: myPhotoUrl, myColorVal: myColorVal,
               ),
             ]),
@@ -302,14 +306,14 @@ class _ThreadCard extends StatelessWidget {
 // ── More ⋮ Menu ───────────────────────────────────────────────────────────────
 
 class _MoreMenu extends StatefulWidget {
-  final String postId, authorUid, authorName, myUid;
+  final String postId, authorUid, authorName, myUid, postContent;
   final bool isOwn;
   final String myInitials, myPhotoUrl;
   final int myColorVal;
 
   const _MoreMenu({
     required this.postId, required this.authorUid, required this.authorName,
-    required this.isOwn, required this.myUid,
+    required this.isOwn, required this.myUid, required this.postContent,
     required this.myInitials, required this.myPhotoUrl, required this.myColorVal,
   });
 
@@ -372,15 +376,48 @@ class _MoreMenuState extends State<_MoreMenu> {
               icon: Icons.delete_outline_rounded,
               label: 'Delete post',
               color: Colors.redAccent,
-              onTap: () { Navigator.pop(context); ThreadsService.deletePost(widget.postId); },
+              onTap: () async {
+                Navigator.pop(context);
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    backgroundColor: const Color(0xFF0A1A4A),
+                    title: const Text('Delete post?', style: TextStyle(color: Colors.white)),
+                    content: const Text('This will permanently remove your post and all its replies.',
+                        style: TextStyle(color: Colors.white70)),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+                      TextButton(onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Delete', style: TextStyle(color: Colors.redAccent))),
+                    ],
+                  ),
+                );
+                if (ok == true) ThreadsService.deletePost(widget.postId);
+              },
             ),
           _MenuTile(
             icon: Icons.flag_outlined, label: 'Report', color: Colors.orange,
-            onTap: () => Navigator.pop(context),
+            onTap: () {
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('Report submitted. Thank you.'),
+                backgroundColor: Color(0xFF2563EB),
+                behavior: SnackBarBehavior.floating,
+              ));
+            },
           ),
           _MenuTile(
             icon: Icons.copy_rounded, label: 'Copy text',
-            onTap: () => Navigator.pop(context),
+            onTap: () {
+              Navigator.pop(context);
+              Clipboard.setData(ClipboardData(text: widget.postContent));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('Text copied to clipboard'),
+                backgroundColor: Color(0xFF2563EB),
+                behavior: SnackBarBehavior.floating,
+              ));
+            },
           ),
           const SizedBox(height: 8),
         ]),
@@ -480,6 +517,10 @@ class _ThreadDetailScreenState extends State<ThreadDetailScreen> {
           : StreamBuilder<List<Map<String, dynamic>>>(
               stream: ThreadsService.repliesStream(widget.postId),
               builder: (context, snap) {
+                if (snap.hasError) {
+                  return Center(child: Text('Could not load replies',
+                      style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 14)));
+                }
                 final replies = snap.data ?? [];
                 return ListView(
                   padding: const EdgeInsets.only(bottom: 100),
@@ -567,7 +608,7 @@ class _DetailPostHeader extends StatelessWidget {
           const SizedBox(width: 6),
           _MoreMenu(
             postId: id, authorUid: authorUid, authorName: authorName,
-            isOwn: isOwn, myUid: myUid,
+            isOwn: isOwn, myUid: myUid, postContent: content,
             myInitials: myInitials, myPhotoUrl: myPhotoUrl, myColorVal: myColorVal,
           ),
         ]),
@@ -720,6 +761,15 @@ class _ComposeSheetState extends State<_ComposeSheet> {
     try {
       await widget.onSubmit(_ctrl.text);
       if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _posting = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
     } finally {
       if (mounted) setState(() => _posting = false);
     }

@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:go_router/go_router.dart';
 import '../../services/ai_service.dart';
 import '../../utils/glass.dart';
 
@@ -90,7 +91,7 @@ class _QuizScreenState extends State<QuizScreen> {
                   child: SafeArea(bottom: false, child: Padding(
                     padding: const EdgeInsets.fromLTRB(4, 8, 16, 12),
                     child: Row(children: [
-                      IconButton(icon: const Icon(Icons.arrow_back_rounded, color: Colors.white), onPressed: () => Navigator.of(context).pop()),
+                      IconButton(icon: const Icon(Icons.arrow_back_rounded, color: Colors.white), onPressed: () => context.canPop() ? context.pop() : context.go('/ai')),
                       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Text('Quiz – ${widget.courseId}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
                         if (_questions != null && !_done)

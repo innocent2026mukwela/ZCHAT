@@ -122,18 +122,28 @@ class _ClassroomBody extends StatelessWidget {
                         ElevatedButton(
                           onPressed: () async {
                             final roomId = const Uuid().v4();
-                            await FirebaseFirestore.instance
-                                .collection('classrooms')
-                                .doc(courseId)
-                                .collection('sessions')
-                                .add({
-                              'title': 'Live Session',
-                              'roomId': roomId,
-                              'status': 'live',
-                              'scheduledAt': FieldValue.serverTimestamp(),
-                            });
-                            if (context.mounted) {
-                              context.push('/classroom/$courseId/live/$roomId');
+                            try {
+                              await FirebaseFirestore.instance
+                                  .collection('courses')
+                                  .doc(courseId)
+                                  .collection('sessions')
+                                  .add({
+                                'title': 'Live Session',
+                                'roomId': roomId,
+                                'status': 'live',
+                                'scheduledAt': FieldValue.serverTimestamp(),
+                              });
+                              if (context.mounted) {
+                                context.push('/classroom/$courseId/live/$roomId');
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                  content: Text('Could not start session: ${e.toString().replaceFirst("Exception: ", "")}'),
+                                  backgroundColor: Colors.redAccent,
+                                  behavior: SnackBarBehavior.floating,
+                                ));
+                              }
                             }
                           },
                           style: ElevatedButton.styleFrom(
@@ -179,7 +189,14 @@ class _ClassroomBody extends StatelessWidget {
                           child: InkWell(
                             borderRadius: BorderRadius.circular(14),
                             onTap: () {
-                              if (status != 'ended') context.push('/classroom/$courseId/live/$roomId');
+                              if (status != 'ended') {
+                                context.push('/classroom/$courseId/live/$roomId');
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                  content: Text('This session has ended'),
+                                  behavior: SnackBarBehavior.floating,
+                                ));
+                              }
                             },
                             child: Row(children: [
                               Container(
@@ -301,11 +318,21 @@ class _MoreMenu extends StatelessWidget {
               onPressed: () async {
                 final title = titleCtrl.text.trim();
                 if (title.isEmpty) return;
-                await FirebaseFirestore.instance
-                    .collection('courses').doc(courseId)
-                    .collection('sessions')
-                    .add({'title': title, 'scheduledAt': Timestamp.fromDate(picked), 'status': 'scheduled', 'roomId': '${courseId}_${picked.millisecondsSinceEpoch}'});
-                if (ctx.mounted) Navigator.pop(ctx);
+                try {
+                  await FirebaseFirestore.instance
+                      .collection('courses').doc(courseId)
+                      .collection('sessions')
+                      .add({'title': title, 'scheduledAt': Timestamp.fromDate(picked), 'status': 'scheduled', 'roomId': '${courseId}_${picked.millisecondsSinceEpoch}'});
+                  if (ctx.mounted) Navigator.pop(ctx);
+                } catch (e) {
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                      content: Text('Could not schedule session: ${e.toString().replaceFirst("Exception: ", "")}'),
+                      backgroundColor: Colors.redAccent,
+                      behavior: SnackBarBehavior.floating,
+                    ));
+                  }
+                }
               },
               child: const Text('Schedule', style: TextStyle(fontWeight: FontWeight.w700)),
             ),
