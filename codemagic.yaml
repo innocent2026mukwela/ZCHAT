@@ -14,8 +14,6 @@ workflows:
         BUNDLE_ID: com.unza.unza_z_chat
         XCODE_SCHEME: Runner
         XCODE_WORKSPACE: ios/Runner.xcworkspace
-      groups:
-        - firebase_ios        # GOOGLE_SERVICE_INFO_PLIST
 
     triggering:
       events:
@@ -25,10 +23,10 @@ workflows:
           include: true
 
     scripts:
-      - name: Set up GoogleService-Info.plist
-        script: |
-          echo $GOOGLE_SERVICE_INFO_PLIST | base64 --decode > $CM_BUILD_DIR/ios/Runner/GoogleService-Info.plist
-
+      # GoogleService-Info.plist is committed in the repo (ios/Runner/) and
+      # bundled via the Xcode target, so no env-var injection is needed. The
+      # previous base64 overwrite step wrote a corrupt/empty plist when the
+      # env var was missing, breaking the Xcode build with a PropertyList error.
       - name: Get Flutter packages
         script: flutter pub get
 
