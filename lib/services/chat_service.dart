@@ -12,6 +12,27 @@ class ChatService {
 
   static String get _myUid => _auth.currentUser!.uid;
 
+  // Current user's display name. Custom-token sign-in leaves
+  // FirebaseAuth.displayName null, so the real name lives in Firestore. Cached
+  // per-uid so account switches don't return a stale name.
+  static String? _cachedMyName;
+  static String? _cachedMyNameUid;
+  static Future<String> _myName() async {
+    if (_cachedMyName != null && _cachedMyName!.isNotEmpty && _cachedMyNameUid == _myUid) {
+      return _cachedMyName!;
+    }
+    try {
+      final doc = await _db.collection('users').doc(_myUid).get();
+      _cachedMyName = (doc.data()?['fullName'] as String?)?.trim().isNotEmpty == true
+          ? doc.data()!['fullName'] as String
+          : (_auth.currentUser?.displayName ?? 'Unknown');
+    } catch (_) {
+      _cachedMyName = _auth.currentUser?.displayName ?? 'Unknown';
+    }
+    _cachedMyNameUid = _myUid;
+    return _cachedMyName!;
+  }
+
   // ── Chat creation ────────────────────────────────────────────────────────
 
   static Future<String> getOrCreateChat(String otherUid) async {
@@ -33,6 +54,7 @@ class ChatService {
         'id': chatId,
         'type': 'direct',
         'members': ids,
+        'memberUids': ids,
         'memberNames': {_myUid: myName, otherUid: otherName},
         'name': '',
         'lastMessage': '',
@@ -94,8 +116,7 @@ class ChatService {
 
     final batch = _db.batch();
 
-    final senderName = _auth.currentUser?.displayName
-        ?? _auth.currentUser?.email ?? 'Unknown';
+    final senderName = await _myName();
 
     final encryptedText = await EncryptionService.encrypt(chatId, text);
 
@@ -140,8 +161,7 @@ class ChatService {
     await batch.commit();
 
     if (chatSnap.exists) {
-      final members    = List<String>.from(chatSnap['members'] as List);
-      final senderName = _auth.currentUser?.displayName ?? 'Someone';
+      final members = List<String>.from(chatSnap['members'] as List);
       for (final uid in members) {
         if (uid != _myUid) {
           AiService.sendNotification(
@@ -249,17 +269,16 @@ class ChatService {
       // Ping other members so their tick marks update while app is in background
       final chatSnap = await _db.collection('chats').doc(chatId).get();
       final memberUids = List<String>.from(
-          chatSnap.data()?['memberUids'] as List? ?? []);
+          (chatSnap.data()?['memberUids'] ?? chatSnap.data()?['members']) as List? ?? []);
       for (final uid in memberUids) {
         if (uid == _myUid) continue;
-        try {
-          await AiService.sendNotification(
-            recipientUid: uid,
-            title: '',
-            body: '',
-            data: {'readReceipt': 'true', 'chatId': chatId},
-          );
-        } catch (_) {}
+        // Fire-and-forget so opening a chat isn't blocked on network round-trips.
+        AiService.sendNotification(
+          recipientUid: uid,
+          title: '',
+          body: '',
+          data: {'readReceipt': 'true', 'chatId': chatId},
+        ).catchError((_) {});
       }
     } catch (_) {}
   }
@@ -287,8 +306,9 @@ class ChatService {
   // ── Edit message ─────────────────────────────────────────────────────────
 
   static Future<void> editMessage(String chatId, String msgId, String newText) async {
+    final encrypted = await EncryptionService.encrypt(chatId, newText);
     await _db.collection('chats').doc(chatId).collection('messages').doc(msgId)
-        .update({'text': newText, 'edited': true});
+        .update({'text': encrypted, 'edited': true});
   }
 
   // ── Typing ───────────────────────────────────────────────────────────────

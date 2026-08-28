@@ -50,8 +50,18 @@ class AuthService {
     final json = jsonDecode(res.body) as Map<String, dynamic>;
     await _auth.signInWithCustomToken(json['firebaseToken'] as String);
 
+    // Custom-token sign-in leaves FirebaseAuth.phoneNumber null, so persist the
+    // verified phone (from the backend user record, falling back to the number
+    // just entered) onto the Firestore profile. Contact matching and user
+    // search rely on users/{uid}.phoneNumber.
+    final uid = _auth.currentUser!.uid;
+    final backendUser = json['user'] as Map<String, dynamic>?;
+    final phone = backendUser?['phone_number'] as String? ?? phoneNumber;
+    await _db.collection('users').doc(uid).set(
+      {'phoneNumber': phone}, SetOptions(merge: true));
+
     return {
-      'uid': _auth.currentUser!.uid,
+      'uid': uid,
       'needsProfile': json['needsProfile'],
     };
   }
@@ -74,7 +84,6 @@ class AuthService {
 
     final data = {
       'uid':             user.uid,
-      'phoneNumber':     user.phoneNumber,
       'fullName':        fullName,
       'role':            role,
       'university':      university,
@@ -90,6 +99,7 @@ class AuthService {
     };
 
     await _db.collection('users').doc(user.uid).set(data, SetOptions(merge: true));
+    try { await user.updateDisplayName(fullName); } catch (_) {}
     return data;
   }
 
