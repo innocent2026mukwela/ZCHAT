@@ -1,6 +1,5 @@
 import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
@@ -9,6 +8,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/chat_service.dart';
+import '../../services/users_api.dart';
 import '../../utils/glass.dart';
 import '../../utils/helpers.dart';
 
@@ -119,28 +119,19 @@ class _NewChatScreenState extends State<NewChatScreen> {
     if (phones.isEmpty) return;
     setState(() => _zchatChecking = true);
 
-    final myUid = FirebaseAuth.instance.currentUser?.uid;
+    // Membership is resolved by the backend (source of truth for accounts),
+    // which excludes the caller and only returns numbers we already have.
     final Map<String, _ZchatUser> result = {};
-
-    for (int i = 0; i < phones.length; i += 30) {
-      final chunk = phones.sublist(i, (i + 30).clamp(0, phones.length));
-      try {
-        final snap = await FirebaseFirestore.instance
-            .collection('users')
-            .where('phoneNumber', whereIn: chunk)
-            .get();
-        for (final doc in snap.docs) {
-          if (doc.id == myUid) continue;
-          final data = doc.data();
-          final phone = data['phoneNumber'] as String? ?? '';
-          result[phone] = _ZchatUser(
-            uid:      doc.id,
-            about:    data['about']    as String? ?? '',
-            photoUrl: data['photoUrl'] as String? ?? '',
-            role:     data['role']     as String? ?? 'student',
-          );
-        }
-      } catch (_) {}
+    final users = await UsersApi.checkContacts(phones);
+    for (final u in users) {
+      final phone = u['phoneNumber'] as String? ?? '';
+      if (phone.isEmpty) continue;
+      result[phone] = _ZchatUser(
+        uid:      u['uid']      as String? ?? '',
+        about:    '',
+        photoUrl: u['photoUrl'] as String? ?? '',
+        role:     u['role']     as String? ?? 'student',
+      );
     }
 
     _cachedZchatMap = result;
@@ -179,19 +170,14 @@ class _NewChatScreenState extends State<NewChatScreen> {
     if (_checking.contains(entry.e164)) return;
     setState(() => _checking.add(entry.e164));
     try {
-      final myUid = FirebaseAuth.instance.currentUser?.uid;
-      final snap  = await FirebaseFirestore.instance
-          .collection('users')
-          .where('phoneNumber', whereIn: entry.allE164s)
-          .limit(1)
-          .get();
+      final users = await UsersApi.checkContacts(entry.allE164s);
       if (!mounted) return;
-      if (snap.docs.isNotEmpty && snap.docs.first.id != myUid) {
-        final doc  = snap.docs.first;
-        final name = doc.data()['fullName'] as String?
-                  ?? doc.data()['displayName'] as String?
-                  ?? entry.displayName;
-        await _openChat(doc.id, name);
+      if (users.isNotEmpty) {
+        final u    = users.first;
+        final name = (u['fullName'] as String?)?.trim().isNotEmpty == true
+            ? u['fullName'] as String
+            : entry.displayName;
+        await _openChat(u['uid'] as String, name);
       } else {
         Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => _InviteScreen(contact: entry),
