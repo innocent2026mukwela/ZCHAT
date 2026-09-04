@@ -1,11 +1,12 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
+import '../config.dart';
 
 /// Talks to the ZCHAT backend /api/users endpoints.
 /// Change [_serverBase] to your production server URL when deploying.
 class UsersApi {
-  static const _serverBase = 'http://172.20.10.14:5000';
+  static const _serverBase = AppConfig.backendBase;
   static const _baseUrl    = '$_serverBase/api/users';
 
   static Future<Map<String, String>> _headers() async {

@@ -1,13 +1,14 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
+import '../config.dart';
 
 /// Handles all communication with the ZCHAT backend AI endpoints.
 /// Change [_serverBase] to your production server URL when deploying.
 /// 10.0.2.2 = Android emulator loopback to host machine.
 /// For a physical device on the same Wi-Fi, use your machine's LAN IP.
 class AiService {
-  static const _serverBase = 'http://172.20.10.14:5000';
+  static const _serverBase = AppConfig.backendBase;
   static const _baseUrl    = '$_serverBase/api/ai';
 
   /// Fetches the current Firebase ID token and returns auth + content headers.

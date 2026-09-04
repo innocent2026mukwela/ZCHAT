@@ -2,13 +2,14 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../config.dart';
 
 /// Handles authentication via the ZCHAT backend's OTP endpoints, bridging
 /// into Firebase Auth with a custom token.
 /// 10.0.2.2 = Android emulator loopback to host machine.
 /// For a physical device on the same Wi-Fi, use your machine's LAN IP.
 class AuthService {
-  static const _baseUrl = 'http://172.20.10.14:5000/api/auth';
+  static const _baseUrl = '${AppConfig.backendBase}/api/auth';
 
   static final _auth = FirebaseAuth.instance;
   static final _db   = FirebaseFirestore.instance;
