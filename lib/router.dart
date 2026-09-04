@@ -18,9 +18,6 @@ import 'screens/courses/pdf_viewer_screen.dart';
 import 'screens/courses/exam_simulator_screen.dart';
 import 'screens/classroom/classroom_screen.dart';
 import 'screens/classroom/live_session_screen.dart';
-import 'screens/classroom/assignment_list_screen.dart';
-import 'screens/classroom/submission_screen.dart';
-import 'screens/classroom/grade_view_screen.dart';
 import 'screens/ai_assistant/ai_home_screen.dart';
 import 'screens/ai_assistant/ai_chat_screen.dart';
 import 'screens/ai_assistant/quiz_screen.dart';
@@ -51,6 +48,18 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/threads/:postId',
       builder: (c, s) => ThreadDetailScreen(postId: s.pathParameters['postId']!),
+    ),
+    GoRoute(
+      path: '/zfeed/user/:uid',
+      builder: (c, s) => ZFeedProfileScreen(uid: s.pathParameters['uid']!),
+    ),
+    GoRoute(
+      path: '/zfeed/search',
+      builder: (c, s) => ZFeedSearchScreen(initialQuery: s.uri.queryParameters['q']),
+    ),
+    GoRoute(
+      path: '/zfeed/bookmarks',
+      builder: (c, s) => const ZFeedBookmarksScreen(),
     ),
 
     // Chats
@@ -107,19 +116,6 @@ final appRouter = GoRouter(
         roomId:   s.pathParameters['roomId']!,
       ),
     ),
-    GoRoute(
-      path: '/classroom/:courseId/assignments',
-      builder: (c, s) => AssignmentListScreen(courseId: s.pathParameters['courseId']!),
-    ),
-    GoRoute(
-      path: '/classroom/submit/:assignmentId',
-      builder: (c, s) => SubmissionScreen(assignmentId: s.pathParameters['assignmentId']!),
-    ),
-    GoRoute(
-      path: '/classroom/grades/:assignmentId',
-      builder: (c, s) => GradeViewScreen(assignmentId: s.pathParameters['assignmentId']!),
-    ),
-
     // AI
     GoRoute(path: '/ai',                       builder: (c, s) => const AiHomeScreen()),
     GoRoute(path: '/ai/chat',                   builder: (c, s) => AiChatScreen(conversationId: s.extra as String?)),

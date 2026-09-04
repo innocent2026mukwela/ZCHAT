@@ -6,7 +6,7 @@ class AppBottomNavBar extends StatelessWidget {
   const AppBottomNavBar({super.key});
 
   static const _items = [
-    _NavItem(label: 'Threads', icon: Icons.dynamic_feed_rounded,   route: '/threads'),
+    _NavItem(label: 'zFeed', icon: Icons.dynamic_feed_rounded,   route: '/threads'),
     _NavItem(label: 'Courses', icon: Icons.school_outlined,        route: '/courses'),
     _NavItem(label: 'AI',      icon: Icons.auto_awesome_rounded,   route: '/ai'),
     _NavItem(label: 'Planner', icon: Icons.event_note_outlined,    route: '/planner'),
