@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
@@ -6,8 +8,8 @@ import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
 /// "ZChat AI" hub — entry point for all AI academic-assistant features.
-/// Shows recent conversations and quick links into each tool. Tools not
-/// yet built render as "Coming soon" until their phase lands.
+/// Shows recent conversations and quick links into each tool. Course-specific
+/// tools ask the student to pick one of their courses first.
 class AiHomeScreen extends StatefulWidget {
   const AiHomeScreen({super.key});
   @override
@@ -160,20 +162,84 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
     style: TextStyle(color: Colors.white.withAlpha(180), fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 0.5),
   );
 
+  /// Course-specific tools (quiz, summaries, exam, plan) need a course. Ask the
+  /// student to pick one of their timetable courses, then navigate to
+  /// [routeFor] with the chosen subject. Falls back to a general session if the
+  /// student has no courses yet.
+  Future<void> _pickCourseThen(String Function(String courseId) routeFor) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final subjects = <String>[];
+    if (uid != null) {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('users').doc(uid).collection('timetable').get();
+        final seen = <String>{};
+        for (final d in snap.docs) {
+          final s = (d.data()['subject'] as String? ?? '').trim();
+          if (s.isNotEmpty && seen.add(s)) subjects.add(s);
+        }
+        subjects.sort();
+      } catch (_) {}
+    }
+    if (!mounted) return;
+
+    if (subjects.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Add your courses in the Planner timetable first.'),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(label: 'Planner', onPressed: () => context.push('/planner')),
+      ));
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF0E1829),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 18, 20, 8),
+            child: Align(alignment: Alignment.centerLeft,
+              child: Text('Choose a course',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800))),
+          ),
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final s in subjects)
+                  ListTile(
+                    leading: const Icon(Icons.menu_book_rounded, color: Color(0xFFB794F4)),
+                    title: Text(s, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    onTap: () {
+                      Navigator.pop(sheetCtx);
+                      context.push(routeFor(Uri.encodeComponent(s)));
+                    },
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
   Widget _buildToolsGrid(BuildContext context) {
     final tools = [
       _Tool('AI Chat', 'Ask questions & get help', Icons.smart_toy_rounded, const Color(0xFF7C3AED),
           () => context.push('/ai/chat')),
       _Tool('Practice Quiz', 'Test yourself with MCQs', Icons.quiz_rounded, const Color(0xFF2563EB),
-          () => context.push('/ai/quiz/General')),
+          () => _pickCourseThen((c) => '/ai/quiz/$c')),
       _Tool('Course Summaries', 'AI-generated study cards', Icons.menu_book_rounded, const Color(0xFF0EA5E9),
-          () => context.push('/ai/summaries/General')),
-      _Tool('Past Paper Analyzer', 'Spot exam patterns', Icons.description_rounded, const Color(0xFF16A34A),
+          () => _pickCourseThen((c) => '/ai/summaries/$c')),
+      _Tool('Past Papers', 'Browse & practice', Icons.description_rounded, const Color(0xFF16A34A),
           () => context.push('/courses')),
       _Tool('Exam Mode', 'Timed practice exams', Icons.timer_rounded, const Color(0xFFF59E0B),
-          () => context.push('/exam-simulator/General')),
+          () => _pickCourseThen((c) => '/exam-simulator/$c')),
       _Tool('Study Planner', 'AI-personalised plans', Icons.event_note_rounded, const Color(0xFFEC4899),
-          () => context.push('/adaptive-plan/General')),
+          () => _pickCourseThen((c) => '/adaptive-plan/$c')),
       _Tool('Group Summarizer', 'Catch up on group chats', Icons.groups_rounded, const Color(0xFF14B8A6),
           () => context.push('/ai/group-summarizer')),
       _Tool('Study Insights', 'Personalised recommendations', Icons.insights_rounded, const Color(0xFF8B5CF6),

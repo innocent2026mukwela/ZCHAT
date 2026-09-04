@@ -226,6 +226,8 @@ class _CourseCard extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
+        // Tap the card to open the course's past papers; the quick-action
+        // buttons jump to Papers / AI Quiz.
         onTap: () => context.push('/courses/${Uri.encodeComponent(c.subject)}/papers'),
         child: Row(children: [
           // Icon block

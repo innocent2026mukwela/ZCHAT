@@ -5,14 +5,32 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
+import '../../services/auth_service.dart';
 import '../../utils/glass.dart';
 
-class ClassroomScreen extends StatelessWidget {
+class ClassroomScreen extends StatefulWidget {
   final String courseId;
   const ClassroomScreen({super.key, required this.courseId});
 
   @override
+  State<ClassroomScreen> createState() => _ClassroomScreenState();
+}
+
+class _ClassroomScreenState extends State<ClassroomScreen> {
+  // Only lecturers may start/schedule live sessions. Students just join.
+  bool _isLecturer = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AuthService.getMe().then((me) {
+      if (mounted && me?['role'] == 'lecturer') setState(() => _isLecturer = true);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final courseId = widget.courseId;
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
@@ -35,14 +53,13 @@ class ClassroomScreen extends StatelessWidget {
                         Text(courseId, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                         const Text('Classroom', style: TextStyle(color: Colors.white54, fontSize: 12)),
                       ])),
-                      IconButton(icon: const Icon(Icons.assignment_outlined, color: Colors.white), onPressed: () => context.push('/classroom/$courseId/assignments')),
-                      _MoreMenu(courseId: courseId),
+                      if (_isLecturer) _MoreMenu(courseId: courseId),
                     ]),
                   )),
                 ),
               ),
             ),
-            Expanded(child: _ClassroomBody(courseId: courseId)),
+            Expanded(child: _ClassroomBody(courseId: courseId, isLecturer: _isLecturer)),
           ]),
         ]),
       ),
@@ -52,7 +69,8 @@ class ClassroomScreen extends StatelessWidget {
 
 class _ClassroomBody extends StatelessWidget {
   final String courseId;
-  const _ClassroomBody({required this.courseId});
+  final bool isLecturer;
+  const _ClassroomBody({required this.courseId, required this.isLecturer});
 
   @override
   Widget build(BuildContext context) {
@@ -102,7 +120,8 @@ class _ClassroomBody extends StatelessWidget {
 
                     const SizedBox(height: 16),
 
-                    // Live session card
+                    // Live session card (lecturer-only — students just join).
+                    if (isLecturer) ...[
                     GlassCard(
                       borderRadius: BorderRadius.circular(18),
                       padding: const EdgeInsets.all(18),
@@ -156,8 +175,8 @@ class _ClassroomBody extends StatelessWidget {
                         ),
                       ]),
                     ).animate(delay: 60.ms).fadeIn(),
-
                     const SizedBox(height: 20),
+                    ],
 
                     const Text('Sessions', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
                     const SizedBox(height: 8),
@@ -256,11 +275,9 @@ class _MoreMenu extends StatelessWidget {
       icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
       color: const Color(0xFF0A1A4A),
       onSelected: (v) {
-        if (v == 'assignments') context.push('/classroom/$courseId/assignments');
         if (v == 'schedule') _showScheduleSessionSheet(context);
       },
       itemBuilder: (_) => [
-        const PopupMenuItem(value: 'assignments', child: Text('Assignments', style: TextStyle(color: Colors.white))),
         const PopupMenuItem(value: 'schedule', child: Text('Schedule session', style: TextStyle(color: Colors.white))),
       ],
     );
