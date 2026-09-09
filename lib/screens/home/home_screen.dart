@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -10,6 +11,8 @@ import 'package:timeago/timeago.dart' as timeago;
 import '../../services/chat_service.dart';
 import '../../services/call_service.dart';
 import '../../services/status_service.dart';
+import '../../services/users_api.dart';
+import '../calls/outgoing_call_screen.dart';
 import '../../utils/glass.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/bottom_nav_bar.dart';
@@ -96,13 +99,16 @@ class _GlassHomeAppBar extends StatelessWidget {
                         },
                       ),
                       const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.search_rounded, color: Colors.white),
-                        onPressed: onSearchTap,
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.camera_alt_outlined, color: Colors.white),
-                        onPressed: () => context.push('/status'),
+                      // Search only applies to the Chats tab — hide it elsewhere
+                      // so it isn't a dead affordance on Status/Calls.
+                      AnimatedBuilder(
+                        animation: DefaultTabController.of(context),
+                        builder: (ctx, _) => DefaultTabController.of(ctx).index == 0
+                            ? IconButton(
+                                icon: const Icon(Icons.search_rounded, color: Colors.white),
+                                onPressed: onSearchTap,
+                              )
+                            : const SizedBox(width: 0, height: 0),
                       ),
                       PopupMenuButton<String>(
                         icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
@@ -110,11 +116,13 @@ class _GlassHomeAppBar extends StatelessWidget {
                         onSelected: (v) {
                           if (v == 'profile')     context.push('/profile');
                           if (v == 'new_group')   context.push('/new-group');
+                          if (v == 'communities') context.push('/communities');
                           if (v == 'starred')     context.push('/starred');
                           if (v == 'broadcasts')  context.push('/broadcasts');
                         },
                         itemBuilder: (_) => [
                           PopupMenuItem(value: 'new_group',   child: Text('New group',          style: TextStyle(color: Colors.white.withAlpha(220)))),
+                          PopupMenuItem(value: 'communities', child: Text('Communities',        style: TextStyle(color: Colors.white.withAlpha(220)))),
                           PopupMenuItem(value: 'broadcasts',  child: Text('Broadcast channels', style: TextStyle(color: Colors.white.withAlpha(220)))),
                           PopupMenuItem(value: 'starred',     child: Text('Starred messages',   style: TextStyle(color: Colors.white.withAlpha(220)))),
                           PopupMenuItem(value: 'profile',     child: Text('Profile',            style: TextStyle(color: Colors.white.withAlpha(220)))),
@@ -207,7 +215,7 @@ class _ChatsTabState extends State<_ChatsTab> {
   String _query = '';
   final _searchCtrl = TextEditingController();
   final _searchFocus = FocusNode();
-  final _archived = <String>{};
+  bool _showArchived = false;
 
   void _toggleSearch() {
     setState(() {
@@ -218,7 +226,9 @@ class _ChatsTabState extends State<_ChatsTab> {
   }
 
   void _archiveChat(String chatId) {
-    setState(() => _archived.add(chatId));
+    // Persist to Firestore (per-user archived flag) so it survives restarts and
+    // syncs across devices. The chat drops out of the active list via the stream.
+    ChatService.toggleArchive(chatId, false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Chat archived'),
@@ -226,11 +236,44 @@ class _ChatsTabState extends State<_ChatsTab> {
         action: SnackBarAction(
           label: 'Undo',
           textColor: const Color(0xFF4F8AFF),
-          onPressed: () => setState(() => _archived.remove(chatId)),
+          onPressed: () => ChatService.toggleArchive(chatId, true),
         ),
       ),
     );
   }
+
+  void _unarchiveChat(String chatId) {
+    ChatService.toggleArchive(chatId, true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Chat unarchived'),
+        backgroundColor: const Color(0xFF0A1A4A),
+        action: SnackBarAction(
+          label: 'Undo',
+          textColor: const Color(0xFF4F8AFF),
+          onPressed: () => ChatService.toggleArchive(chatId, false),
+        ),
+      ),
+    );
+  }
+
+  Widget _archivedBanner(int count) => InkWell(
+    onTap: () => setState(() => _showArchived = true),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white.withAlpha(12)))),
+      child: Row(children: [
+        Icon(Icons.archive_outlined, color: Colors.white.withAlpha(160), size: 22),
+        const SizedBox(width: 18),
+        Expanded(
+          child: Text('Archived',
+            style: TextStyle(color: Colors.white.withAlpha(220), fontSize: 15, fontWeight: FontWeight.w500)),
+        ),
+        Text('$count',
+          style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 13, fontWeight: FontWeight.w600)),
+      ]),
+    ),
+  );
 
   @override
   void dispose() {
@@ -281,6 +324,22 @@ class _ChatsTabState extends State<_ChatsTab> {
                 )
               : const SizedBox.shrink(),
         ),
+        // Pinned ZChat AI assistant — always at the top of the chat list,
+        // opens a persistent 1-to-1 conversation (schedule-aware, reads chats).
+        if (!_showArchived && _query.isEmpty) const _AiAssistantTile(),
+        if (_showArchived)
+          InkWell(
+            onTap: () => setState(() => _showArchived = false),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white.withAlpha(12)))),
+              child: Row(children: [
+                Icon(Icons.arrow_back_rounded, color: Colors.white.withAlpha(200), size: 20),
+                const SizedBox(width: 14),
+                const Text('Archived', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          ),
         Expanded(
           child: StreamBuilder<List<Map<String, dynamic>>>(
             stream: ChatService.chatsStream(),
@@ -289,8 +348,10 @@ class _ChatsTabState extends State<_ChatsTab> {
                 return const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4F8AFF)));
               }
 
-              var chats = (snap.data ?? [])
-                  .where((c) => !_archived.contains(c['id'] as String?))
+              final all = snap.data ?? [];
+              final archivedCount = all.where((c) => ChatService.isArchived(c)).length;
+              var chats = all
+                  .where((c) => ChatService.isArchived(c) == _showArchived)
                   .toList();
 
               if (_query.isNotEmpty) {
@@ -302,12 +363,25 @@ class _ChatsTabState extends State<_ChatsTab> {
                 }).toList();
               }
 
+              // Show an "Archived" access banner above the active list.
+              final showBanner = !_showArchived && archivedCount > 0 && _query.isEmpty;
+
               if (chats.isEmpty) {
+                if (showBanner) {
+                  return ListView(
+                    padding: const EdgeInsets.only(top: 4, bottom: 80),
+                    children: [_archivedBanner(archivedCount)],
+                  );
+                }
                 return Center(
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
                     Icon(Icons.chat_bubble_outline_rounded, size: 56, color: Colors.white.withAlpha(40)),
                     const SizedBox(height: 14),
-                    if (_query.isNotEmpty)
+                    if (_showArchived)
+                      Text('No archived chats',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white.withAlpha(100), fontSize: 15))
+                    else if (_query.isNotEmpty)
                       Text('No chats found',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white.withAlpha(100), fontSize: 15))
@@ -325,8 +399,10 @@ class _ChatsTabState extends State<_ChatsTab> {
 
               return ListView.builder(
                 padding: const EdgeInsets.only(top: 4, bottom: 80),
-                itemCount: chats.length,
-                itemBuilder: (ctx, i) {
+                itemCount: chats.length + (showBanner ? 1 : 0),
+                itemBuilder: (ctx, rawIndex) {
+                  if (showBanner && rawIndex == 0) return _archivedBanner(archivedCount);
+                  final i = showBanner ? rawIndex - 1 : rawIndex;
                   final chat = chats[i];
                   final chatId   = chat['id'] as String? ?? '';
                   final name     = ChatService.getChatDisplayName(chat);
@@ -335,6 +411,7 @@ class _ChatsTabState extends State<_ChatsTab> {
                   final isGroup  = chat['type'] == 'group';
                   final isPinned = ChatService.isPinned(chat);
                   final isMuted  = ChatService.isMuted(chat);
+                  final mentioned = ChatService.isMentioned(chat);
                   final ts       = chat['lastTime'] as Timestamp?;
                   final time     = ChatService.formatTime(ts);
 
@@ -348,8 +425,10 @@ class _ChatsTabState extends State<_ChatsTab> {
                     isGroup: isGroup,
                     isPinned: isPinned,
                     isMuted: isMuted,
+                    isMentioned: mentioned,
+                    isArchived: _showArchived,
                     index: i,
-                    onArchive: () => _archiveChat(chatId),
+                    onArchive: () => _showArchived ? _unarchiveChat(chatId) : _archiveChat(chatId),
                     searchQuery: _query,
                   );
                 },
@@ -358,6 +437,64 @@ class _ChatsTabState extends State<_ChatsTab> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// Pinned "ZChat AI" entry at the top of the Chats list.
+class _AiAssistantTile extends StatelessWidget {
+  const _AiAssistantTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => context.push('/ai/assistant'),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [const Color(0xFF7C3AED).withAlpha(30), Colors.transparent],
+          ),
+          border: Border(bottom: BorderSide(color: Colors.white.withAlpha(14))),
+        ),
+        child: Row(children: [
+          Container(
+            width: 52, height: 52,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft, end: Alignment.bottomRight,
+                colors: [Color(0xFF7C3AED), Color(0xFF4F8AFF)],
+              ),
+            ),
+            child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                const Text('ZChat AI',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFB794F4).withAlpha(40),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text('AI',
+                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Color(0xFFB794F4))),
+                ),
+              ]),
+              const SizedBox(height: 3),
+              Text('Your assistant · schedule, summaries & more',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: Colors.white.withAlpha(150))),
+            ]),
+          ),
+          Icon(Icons.chevron_right_rounded, color: Colors.white.withAlpha(90)),
+        ]),
+      ),
     );
   }
 }
@@ -371,6 +508,8 @@ class _ChatTile extends StatelessWidget {
   final bool isGroup;
   final bool isPinned;
   final bool isMuted;
+  final bool isMentioned;
+  final bool isArchived;
   final int index;
   final VoidCallback onArchive;
   final String searchQuery;
@@ -385,6 +524,8 @@ class _ChatTile extends StatelessWidget {
     required this.isGroup,
     required this.isPinned,
     required this.isMuted,
+    this.isMentioned = false,
+    required this.isArchived,
     required this.index,
     required this.onArchive,
     required this.searchQuery,
@@ -405,9 +546,9 @@ class _ChatTile extends StatelessWidget {
         padding: const EdgeInsets.only(right: 24),
         color: const Color(0xFF1E3A5F),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.archive_outlined, color: Colors.white, size: 26),
+          Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined, color: Colors.white, size: 26),
           const SizedBox(height: 4),
-          Text('Archive', style: TextStyle(color: Colors.white.withAlpha(200), fontSize: 12)),
+          Text(isArchived ? 'Unarchive' : 'Archive', style: TextStyle(color: Colors.white.withAlpha(200), fontSize: 12)),
         ]),
       ),
       confirmDismiss: (_) async {
@@ -453,6 +594,20 @@ class _ChatTile extends StatelessWidget {
                       color: hasUnread ? Colors.white.withAlpha(220) : Colors.white.withAlpha(140),
                       fontWeight: hasUnread ? FontWeight.w500 : FontWeight.normal),
                   )),
+                  if (isMentioned) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 20, height: 20,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2563EB).withAlpha(50),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: const Color(0xFF4F8AFF)),
+                      ),
+                      alignment: Alignment.center,
+                      child: const Text('@',
+                        style: TextStyle(color: Color(0xFF9EC5FF), fontSize: 12, fontWeight: FontWeight.w800)),
+                    ),
+                  ],
                   if (hasUnread) ...[
                     const SizedBox(width: 6),
                     Container(
@@ -481,6 +636,7 @@ class _ChatTile extends StatelessWidget {
         name: name,
         isPinned: isPinned,
         isMuted: isMuted,
+        isArchived: isArchived,
         unread: unread,
         onArchive: onArchive,
       ),
@@ -529,6 +685,7 @@ class _ChatOptionsSheet extends StatelessWidget {
   final String name;
   final bool isPinned;
   final bool isMuted;
+  final bool isArchived;
   final int unread;
   final VoidCallback onArchive;
 
@@ -537,6 +694,7 @@ class _ChatOptionsSheet extends StatelessWidget {
     required this.name,
     required this.isPinned,
     required this.isMuted,
+    required this.isArchived,
     required this.unread,
     required this.onArchive,
   });
@@ -562,8 +720,8 @@ class _ChatOptionsSheet extends StatelessWidget {
         title: Text(isMuted ? 'Unmute' : 'Mute notifications', style: const TextStyle(color: Colors.white)),
         onTap: () { Navigator.pop(context); ChatService.muteChat(chatId, !isMuted); }),
       ListTile(
-        leading: const Icon(Icons.archive_outlined, color: Colors.white70),
-        title: const Text('Archive', style: TextStyle(color: Colors.white)),
+        leading: Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined, color: Colors.white70),
+        title: Text(isArchived ? 'Unarchive' : 'Archive', style: const TextStyle(color: Colors.white)),
         onTap: () { Navigator.pop(context); onArchive(); }),
       ListTile(
         leading: Icon(unread > 0 ? Icons.mark_chat_read_outlined : Icons.mark_chat_unread_outlined, color: Colors.white70),
@@ -615,15 +773,22 @@ class _StatusTabState extends State<_StatusTab> {
   Map<String, dynamic>?      _myProfile;
   bool _loading = true;
   String? _loadError;
+  StreamSubscription<List<Map<String, dynamic>>>? _myStatusSub;
 
   @override
   void initState() {
     super.initState();
     _loadMyProfile();
-    StatusService.myStatusStream().listen((items) {
+    _myStatusSub = StatusService.myStatusStream().listen((items) {
       if (mounted) setState(() => _myItems = items);
     });
     _loadContacts();
+  }
+
+  @override
+  void dispose() {
+    _myStatusSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadMyProfile() async {
@@ -655,17 +820,13 @@ class _StatusTabState extends State<_StatusTab> {
       }
     }
     if (phones.isEmpty) return [];
-    final uids = <String>[];
-    final list = phones.toList();
-    for (int i = 0; i < list.length; i += 30) {
-      final chunk = list.sublist(i, (i + 30).clamp(0, list.length));
-      final snap = await FirebaseFirestore.instance
-          .collection('users').where('phoneNumber', whereIn: chunk).get();
-      for (final doc in snap.docs) {
-        if (doc.id != _myUid) uids.add(doc.id);
-      }
-    }
-    return uids;
+    // Route through the backend so the client never reads the full users table.
+    // The endpoint only returns membership for numbers the caller already holds.
+    final matches = await UsersApi.checkContacts(phones.toList());
+    return matches
+        .map((m) => m['uid'] as String? ?? '')
+        .where((uid) => uid.isNotEmpty && uid != _myUid)
+        .toList();
   }
 
   @override
@@ -794,7 +955,7 @@ class _StatusRow extends StatelessWidget {
           const SizedBox(height: 2),
           Text(subtitle, style: TextStyle(fontSize: 13, color: Colors.white.withAlpha(140))),
         ])),
-        if (trailing != null) trailing!,
+        ?trailing,
       ]),
     ),
   );
@@ -836,13 +997,51 @@ class _LiveStatusRing extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════
 // CALLS TAB
 // ══════════════════════════════════════════════════════════════════════
-class _CallsTab extends StatelessWidget {
+class _CallsTab extends StatefulWidget {
   const _CallsTab();
+  @override
+  State<_CallsTab> createState() => _CallsTabState();
+}
 
+class _CallsTabState extends State<_CallsTab> {
   static const _colors = [
     Color(0xFF1565C0), Color(0xFF2E7D32), Color(0xFF6A1B9A),
     Color(0xFFAD1457), Color(0xFFE65100), Color(0xFF00695C),
   ];
+
+  TabController? _tab;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final tab = DefaultTabController.of(context);
+    if (tab != _tab) {
+      _tab?.removeListener(_onTabChanged);
+      _tab = tab..addListener(_onTabChanged);
+      _maybeMarkSeen();
+    }
+  }
+
+  void _onTabChanged() {
+    if (_tab != null && !_tab!.indexIsChanging) _maybeMarkSeen();
+  }
+
+  void _maybeMarkSeen() {
+    if (_tab?.index == 2) CallService.markMissedCallsSeen();
+  }
+
+  @override
+  void dispose() {
+    _tab?.removeListener(_onTabChanged);
+    super.dispose();
+  }
+
+  void _callBack(BuildContext context, String uid, String name, bool video) {
+    if (uid.isEmpty) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => OutgoingCallScreen(calleeUid: uid, calleeName: name, isVideo: video),
+    ));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -883,8 +1082,13 @@ class _CallsTab extends StatelessWidget {
             final dur      = CallService.formatDuration(call['duration'] as int?);
             final time     = CallService.formatCallTime(call['startedAt'] as Timestamp?);
             final color    = _colors[name.codeUnitAt(0) % _colors.length];
+            final otherUid = isCaller
+                ? (call['calleeUid'] as String? ?? '')
+                : (call['callerUid'] as String? ?? '');
 
-            return Container(
+            return InkWell(
+              onTap: () => _callBack(context, otherUid, name, isVideo),
+              child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
                   border: Border(bottom: BorderSide(color: Colors.white.withAlpha(12)))),
@@ -926,13 +1130,16 @@ class _CallsTab extends StatelessWidget {
                   ],
                 )),
                 IconButton(
+                  icon: Icon(isVideo ? Icons.videocam_outlined : Icons.call_outlined,
+                      color: const Color(0xFF4F8AFF), size: 22),
+                  tooltip: isVideo ? 'Video call' : 'Call',
+                  onPressed: () => _callBack(context, otherUid, name, isVideo),
+                ),
+                IconButton(
                   icon: const Icon(Icons.message_outlined,
                       color: Color(0xFF4F8AFF), size: 22),
                   tooltip: 'Message',
                   onPressed: () async {
-                    final otherUid = isCaller
-                        ? call['calleeUid'] as String? ?? ''
-                        : call['callerUid'] as String? ?? '';
                     if (otherUid.isEmpty) return;
                     final chatId = await ChatService.getOrCreateChat(otherUid);
                     if (ctx2.mounted) {
@@ -941,7 +1148,7 @@ class _CallsTab extends StatelessWidget {
                   },
                 ),
               ]),
-            ).animate(delay: (i * 35).ms).fadeIn();
+            )).animate(delay: (i * 35).ms).fadeIn();
           },
         );
       },

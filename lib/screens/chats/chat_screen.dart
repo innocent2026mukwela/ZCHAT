@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -19,8 +20,12 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import '../../screens/calls/outgoing_call_screen.dart';
+import '../../screens/classroom/live_session_screen.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../../config.dart';
 import '../../services/ai_service.dart';
 import '../../services/auto_download_service.dart';
 import '../../services/chat_service.dart';
@@ -49,6 +54,13 @@ class _ChatScreenState extends State<ChatScreen>
   bool _summaryDismissed = false;
   int  _unreadCount = 0;
   bool _showEmojiKeyboard = false;
+  int  _pageLimit = 50; // messages loaded; grows when the user loads older
+
+  // @mentions (group chats)
+  final List<Map<String, String>> _groupMembers = []; // {uid, name}
+  String? _mentionQuery;                                // active @query, null = off
+  final Set<String> _pendingMentions = {};             // uids selected via @
+  bool _sendBlocked = false;                            // group is admins-only & I'm not admin
 
   // Swipe-to-reply
   _Msg? _replyTarget;
@@ -190,6 +202,75 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  Future<void> _shareLocation() async {
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Location permission is needed to share your location.'),
+            behavior: SnackBarBehavior.floating));
+        }
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition();
+      await ChatService.sendLocation(widget.chatId, pos.latitude, pos.longitude);
+      Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not get your location: ${e.toString().replaceFirst('Exception: ', '')}'),
+          behavior: SnackBarBehavior.floating));
+      }
+    }
+  }
+
+  void _showPollComposer() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E1829),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: _PollComposerSheet(
+          onSubmit: (q, opts, multi) {
+            ChatService.sendPoll(widget.chatId, q, opts, multi: multi);
+            Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showEventComposer() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E1829),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: _EventComposerSheet(
+          onSubmit: (title, dt, loc, desc, addCall) {
+            ChatService.sendEvent(
+              widget.chatId,
+              title: title,
+              dateTime: dt,
+              location: loc,
+              description: desc,
+              callRoomId: addCall ? 'event_${widget.chatId}_${DateTime.now().millisecondsSinceEpoch}' : null,
+            );
+            Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _pickContact() async {
     try {
       final status = await Permission.contacts.request();
@@ -226,19 +307,25 @@ class _ChatScreenState extends State<ChatScreen>
     '🏆','⭐','🌟','💡','📝','🎵','🍕','😂',
   ];
 
-  // Replace 'LIVDSRZULELA96B' with your own Tenor API v1 key in production
-  static const _kTenorKey = 'LIVDSRZULELA96B';
-
+  // Tenor v2 (Google). Key comes from AppConfig.tenorKey (--dart-define=TENOR_KEY).
+  // v1 was shut down by Google; v2 returns media in `media_formats`.
   Future<List<String>> _searchGifs(String query) async {
+    if (AppConfig.tenorKey.isEmpty) return [];
     final q = Uri.encodeComponent(query.isEmpty ? 'trending' : query);
-    final url = 'https://api.tenor.com/v1/search?q=$q&key=$_kTenorKey&limit=20&media_filter=minimal';
+    final url = 'https://tenor.googleapis.com/v2/search'
+        '?q=$q&key=${AppConfig.tenorKey}&limit=20&media_filter=tinygif,gif&client_key=zchat';
     try {
       final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 6));
       if (res.statusCode != 200) return [];
       final body = jsonDecode(res.body) as Map;
       final results = body['results'] as List? ?? [];
       return results
-          .map((r) => (((r['media'] as List?)?.first)['gif']?['url'] as String?) ?? '')
+          .map((r) {
+            final formats = r['media_formats'] as Map? ?? {};
+            final tiny = formats['tinygif'] as Map?;
+            final full = formats['gif'] as Map?;
+            return ((tiny?['url'] ?? full?['url']) as String?) ?? '';
+          })
           .where((u) => u.isNotEmpty)
           .toList();
     } catch (_) {
@@ -317,7 +404,7 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             )),
             const SizedBox(height: 20),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            Wrap(alignment: WrapAlignment.center, spacing: 6, runSpacing: 18, children: [
               _AttachOption(
                 icon: Icons.photo_library_rounded,
                 label: 'Gallery',
@@ -354,15 +441,16 @@ class _ChatScreenState extends State<ChatScreen>
                   _pickVideo();
                 },
               ),
-              _AttachOption(
-                icon: Icons.gif_box_outlined,
-                label: 'GIF',
-                color: const Color(0xFFA78BFA),
-                onTap: () {
-                  Navigator.pop(context);
-                  _showGifPicker();
-                },
-              ),
+              if (AppConfig.gifEnabled)
+                _AttachOption(
+                  icon: Icons.gif_box_outlined,
+                  label: 'GIF',
+                  color: const Color(0xFFA78BFA),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showGifPicker();
+                  },
+                ),
               _AttachOption(
                 icon: Icons.person_rounded,
                 label: 'Contact',
@@ -370,6 +458,42 @@ class _ChatScreenState extends State<ChatScreen>
                 onTap: () {
                   Navigator.pop(context);
                   _pickContact();
+                },
+              ),
+              _AttachOption(
+                icon: Icons.sticky_note_2_outlined,
+                label: 'Sticker',
+                color: const Color(0xFFF472B6),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showStickerPicker();
+                },
+              ),
+              _AttachOption(
+                icon: Icons.location_on_outlined,
+                label: 'Location',
+                color: const Color(0xFFEF4444),
+                onTap: () {
+                  Navigator.pop(context);
+                  _shareLocation();
+                },
+              ),
+              _AttachOption(
+                icon: Icons.poll_outlined,
+                label: 'Poll',
+                color: const Color(0xFF60A5FA),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showPollComposer();
+                },
+              ),
+              _AttachOption(
+                icon: Icons.event_rounded,
+                label: 'Event',
+                color: const Color(0xFFFB923C),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showEventComposer();
                 },
               ),
             ]),
@@ -394,6 +518,7 @@ class _ChatScreenState extends State<ChatScreen>
     ChatService.markRead(widget.chatId);
     _loadPinnedMessage();
     _loadDisappearing();
+    if (!_isDirect) _loadGroupMembers();
     _loadSummaryDismissed();
     ChatService.getDeletedForMeIds(widget.chatId).then((ids) {
       if (mounted) setState(() => _deletedForMe.addAll(ids));
@@ -412,15 +537,19 @@ class _ChatScreenState extends State<ChatScreen>
         if (mounted) setState(() => _isTyping = typing);
       });
 
-      // Presence: stream other user's online status
+      // Presence: stream other user's online status, respecting their
+      // "Last seen" privacy setting. 'Nobody' hides both online + last-seen
+      // (WhatsApp-style); in a direct chat 'My contacts' counts as visible.
       _presenceSub = PresenceService.stream(_otherUid).listen((snap) {
         if (!mounted) return;
-        final data   = snap.data();
-        final online = (data?['isOnline'] as bool?) == true;
-        final ts     = data?['lastSeen'] as Timestamp?;
+        final data    = snap.data();
+        final privacy = data?['privacyLastSeen'] as String? ?? 'My contacts';
+        final hidden  = privacy == 'Nobody';
+        final online  = !hidden && (data?['isOnline'] as bool?) == true;
+        final ts      = data?['lastSeen'] as Timestamp?;
         setState(() {
           _isOnline     = online;
-          _lastSeenText = online ? '' : PresenceService.formatLastSeen(ts);
+          _lastSeenText = hidden ? '' : (online ? '' : PresenceService.formatLastSeen(ts));
         });
       });
     }
@@ -472,17 +601,32 @@ class _ChatScreenState extends State<ChatScreen>
     if (mounted && doc.exists) {
       setState(() =>
           _disappearing = doc.data()?['disappearingMessages'] as String? ?? 'off');
+      // Actually delete anything already past its TTL when the chat is opened.
+      _purgeExpired();
     }
   }
 
+  Duration? _disappearingTtl() {
+    switch (_disappearing) {
+      case '24h': return const Duration(hours: 24);
+      case '7d':  return const Duration(days: 7);
+      case '30d': return const Duration(days: 30);
+      default:    return null; // 'off'
+    }
+  }
+
+  void _purgeExpired() {
+    final ttl = _disappearingTtl();
+    if (ttl == null) return;
+    // Fire-and-forget; the client-side _isExpired filter hides anything not yet
+    // deleted, so the UI is correct even before the purge completes.
+    ChatService.purgeExpiredMessages(widget.chatId, ttl);
+  }
+
   bool _isExpired(_Msg msg) {
-    if (_disappearing == 'off') return false;
-    final duration = _disappearing == '24h'
-        ? const Duration(hours: 24)
-        : _disappearing == '7d'
-            ? const Duration(days: 7)
-            : const Duration(days: 30);
-    return DateTime.now().isAfter(msg.createdAt.add(duration));
+    final ttl = _disappearingTtl();
+    if (ttl == null) return false;
+    return DateTime.now().isAfter(msg.createdAt.add(ttl));
   }
 
   static const _monthNames = [
@@ -629,16 +773,20 @@ class _ChatScreenState extends State<ChatScreen>
     if (text.isEmpty) return;
     HapticFeedback.lightImpact();
     final replyTarget = _replyTarget;
+    final mentions = _isDirect ? const <String>[] : _resolveMentions(text);
     setState(() {
       _ctrl.clear();
       _hasText = false;
       _replyTarget = null;
+      _mentionQuery = null;
+      _pendingMentions.clear();
     });
     ChatService.sendMessage(
       widget.chatId,
       text,
+      mentions: mentions.isEmpty ? null : mentions,
       replyToId:         replyTarget?.id,
-      replyToText:       replyTarget?.text,
+      replyToText:       replyTarget == null ? null : _msgPreview(replyTarget),
       replyToSenderName: replyTarget == null
           ? null
           : (replyTarget.sent
@@ -646,6 +794,70 @@ class _ChatScreenState extends State<ChatScreen>
               : (replyTarget.senderName ?? 'Unknown')),
     );
     Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+  }
+
+  // ── @mentions (group chats) ─────────────────────────────────────────────────
+
+  Future<void> _loadGroupMembers() async {
+    try {
+      final doc = await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).get();
+      final data = doc.data() ?? {};
+      final names = Map<String, dynamic>.from(data['memberNames'] as Map? ?? {});
+      if (!mounted) return;
+      setState(() {
+        _groupMembers
+          ..clear()
+          ..addAll(names.entries
+              .where((e) => e.key != _myUid)
+              .map((e) => {'uid': e.key, 'name': (e.value as String?) ?? 'Member'}));
+        _sendBlocked = ChatService.isSendBlocked({...data, 'id': widget.chatId});
+      });
+    } catch (_) {}
+  }
+
+  void _onComposerChanged(String v) {
+    setState(() => _hasText = v.trim().isNotEmpty);
+    _onTypingChanged(v.isNotEmpty);
+    if (_isDirect || _groupMembers.isEmpty) {
+      if (_mentionQuery != null) setState(() => _mentionQuery = null);
+      return;
+    }
+    final sel  = _ctrl.selection.baseOffset;
+    final upto = (sel >= 0 && sel <= v.length) ? v.substring(0, sel) : v;
+    final match = RegExp(r'(?:^|\s)@([A-Za-z0-9_]*)$').firstMatch(upto);
+    setState(() => _mentionQuery = match?.group(1)?.toLowerCase());
+  }
+
+  void _insertMention(Map<String, String> member) {
+    final v   = _ctrl.text;
+    final sel = _ctrl.selection.baseOffset.clamp(0, v.length);
+    final before = v.substring(0, sel);
+    final after  = v.substring(sel);
+    final at = before.lastIndexOf('@');
+    if (at < 0) return;
+    final newBefore = '${before.substring(0, at)}@${member['name']} ';
+    _ctrl.text = '$newBefore$after';
+    _ctrl.selection = TextSelection.fromPosition(TextPosition(offset: newBefore.length));
+    _pendingMentions.add(member['uid'] ?? '');
+    setState(() { _mentionQuery = null; _hasText = _ctrl.text.trim().isNotEmpty; });
+  }
+
+  List<String> _resolveMentions(String text) {
+    final out = <String>[];
+    for (final m in _groupMembers) {
+      final uid = m['uid'] ?? '';
+      if (_pendingMentions.contains(uid) && text.contains('@${m['name']}')) out.add(uid);
+    }
+    return out;
+  }
+
+  List<Map<String, String>> get _mentionMatches {
+    final q = _mentionQuery;
+    if (q == null) return const [];
+    return _groupMembers
+        .where((m) => (m['name'] ?? '').toLowerCase().contains(q))
+        .take(6)
+        .toList();
   }
 
   void _scrollToBottom() {
@@ -936,11 +1148,14 @@ class _ChatScreenState extends State<ChatScreen>
               msg: _replyTarget!,
               onClear: _clearReply,
             ),
-            _recording ? _VoiceRecordBar(
-              pulseAnim: _micPulse,
-              onCancel: () => _stopRecording(cancel: true),
-              onSend: () => _stopRecording(),
-            ) : _buildInput(),
+            if (_sendBlocked)
+              _AdminsOnlyNotice()
+            else
+              _recording ? _VoiceRecordBar(
+                pulseAnim: _micPulse,
+                onCancel: () => _stopRecording(cancel: true),
+                onSend: () => _stopRecording(),
+              ) : _buildInput(),
             if (_showEmojiKeyboard)
               EmojiPickerPanel(
                 onEmojiSelected: (e) {
@@ -1071,13 +1286,15 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildMessages() {
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: ChatService.messagesStream(widget.chatId),
+      stream: ChatService.messagesStream(widget.chatId, limit: _pageLimit),
       builder: (ctx, snap) {
         if (snap.hasError) {
           return Center(child: Text('Could not load messages',
               style: TextStyle(color: Colors.white.withAlpha(120))));
         }
         final docs = snap.data ?? [];
+        // If we received a full page, older messages likely exist.
+        final hasMore = docs.length >= _pageLimit;
         var messages = docs
             .where((d) => d['deleted'] != true)
             .where((d) => !_deletedForMe.contains(d['id'] as String? ?? ''))
@@ -1106,11 +1323,27 @@ class _ChatScreenState extends State<ChatScreen>
               (_) { if (mounted) setState(() => _unreadCount = unreadCount); });
         }
 
+        // A "load earlier" header occupies index 0 when more history exists.
+        final showLoadMore = hasMore && _searchQuery.isEmpty;
         return ListView.builder(
           controller: _scroll,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          itemCount: messages.length,
-          itemBuilder: (ctx, i) {
+          itemCount: messages.length + (showLoadMore ? 1 : 0),
+          itemBuilder: (ctx, rawIndex) {
+            if (showLoadMore && rawIndex == 0) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _pageLimit += 50),
+                    icon: const Icon(Icons.history_rounded, size: 16, color: Color(0xFF4F8AFF)),
+                    label: const Text('Load earlier messages',
+                        style: TextStyle(color: Color(0xFF4F8AFF), fontSize: 13)),
+                  ),
+                ),
+              );
+            }
+            final i = showLoadMore ? rawIndex - 1 : rawIndex;
             final msg  = messages[i];
             final prev = i > 0 ? messages[i - 1] : null;
             final showDate = prev == null ||
@@ -1173,10 +1406,15 @@ class _ChatScreenState extends State<ChatScreen>
           Navigator.pop(context);
           _showForwardSheet(msg);
         },
-        onEdit: msg.sent && !msg.isImage && !msg.isVoice ? () {
-          Navigator.pop(context);
-          _showEditDialog(msg);
-        } : null,
+        // Edit is only offered on your own text messages, within a 15-minute
+        // window (WhatsApp-style).
+        onEdit: msg.sent && !msg.isImage && !msg.isVoice &&
+                DateTime.now().difference(msg.createdAt) < const Duration(minutes: 15)
+            ? () {
+                Navigator.pop(context);
+                _showEditDialog(msg);
+              }
+            : null,
         onPin: () {
           Navigator.pop(context);
           _pinMessage(msg);
@@ -1367,11 +1605,11 @@ class _ChatScreenState extends State<ChatScreen>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _ForwardSheet(
-        msgText: msg.isVoice ? '🎤 Voice message' : msg.isImage ? '📷 Photo' : msg.text,
+        msgText: _msgPreview(msg),
         onForwardTo: (chatId) {
           ChatService.sendMessage(
             chatId,
-            msg.isVoice ? '🎤 Voice message' : msg.isImage ? '📷 Photo' : msg.text,
+            _msgPreview(msg),
             type: msg.isVoice ? 'voice' : msg.isImage ? 'image' : 'text',
             imageUrl: msg.imageUrl,
             audioUrl: msg.audioUrl,
@@ -1403,7 +1641,11 @@ class _ChatScreenState extends State<ChatScreen>
           padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
           child: SafeArea(
             top: false,
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_mentionMatches.isNotEmpty) _mentionSuggestions(),
+                Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Expanded(
@@ -1455,16 +1697,9 @@ class _ChatScreenState extends State<ChatScreen>
                                 onTap: () {
                                   if (_showEmojiKeyboard) setState(() => _showEmojiKeyboard = false);
                                 },
-                                onChanged: (v) {
-                                  setState(() => _hasText = v.trim().isNotEmpty);
-                                  _onTypingChanged(v.isNotEmpty);
-                                },
+                                onChanged: _onComposerChanged,
                               ),
                             ),
-                            IconButton(
-                                icon: Icon(Icons.emoji_emotions_outlined,
-                                    color: Colors.white.withAlpha(160), size: 22),
-                                onPressed: _showStickerPicker),
                             IconButton(
                                 icon: Icon(Icons.attach_file_rounded,
                                     color: Colors.white.withAlpha(160), size: 22),
@@ -1508,12 +1743,66 @@ class _ChatScreenState extends State<ChatScreen>
                   ),
                 ),
               ],
+                ),
+              ],
             ),
           ),
         ),
       ),
     );
   }
+
+  // Horizontal strip of @-mention candidates shown above the composer.
+  Widget _mentionSuggestions() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      constraints: const BoxConstraints(maxHeight: 46),
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: _mentionMatches.map((m) => Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: GestureDetector(
+            onTap: () => _insertMention(m),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(20),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white.withAlpha(35)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                CircleAvatar(
+                  radius: 11, backgroundColor: const Color(0xFF2563EB),
+                  child: Text((m['name'] ?? '?').isNotEmpty ? m['name']![0].toUpperCase() : '?',
+                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 7),
+                Text('@${m['name']}', style: const TextStyle(color: Colors.white, fontSize: 13)),
+              ]),
+            ),
+          ),
+        )).toList(),
+      ),
+    );
+  }
+}
+
+// Shown instead of the composer when a group is admins-only and you're not an admin.
+class _AdminsOnlyNotice extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(vertical: 16),
+    decoration: BoxDecoration(
+      color: Colors.white.withAlpha(10),
+      border: Border(top: BorderSide(color: Colors.white.withAlpha(20))),
+    ),
+    child: SafeArea(top: false, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Icon(Icons.lock_outline_rounded, size: 16, color: Colors.white.withAlpha(140)),
+      const SizedBox(width: 8),
+      Text('Only admins can send messages', style: TextStyle(color: Colors.white.withAlpha(150), fontSize: 13)),
+    ])),
+  );
 }
 
 // ── Swipeable bubble wrapper ──────────────────────────────────────────────────
@@ -1663,6 +1952,9 @@ class _Bubble extends StatelessWidget {
     if (msg.isVideo)   return _VideoBubble(msg: msg);
     if (msg.isSticker) return _StickerBubble(msg: msg);
     if (msg.isContact) return _ContactBubble(msg: msg);
+    if (msg.isPoll)    return _PollBubble(msg: msg);
+    if (msg.isEvent)   return _EventBubble(msg: msg);
+    if (msg.isLocation) return _LocationBubble(msg: msg);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
@@ -1686,10 +1978,15 @@ class _Bubble extends StatelessWidget {
           // Quote reply
           if (msg.replyTo != null)
             _QuotePreview(original: msg.replyTo!, isSentBubble: msg.sent),
-          Text(
-            msg.text,
-            style: const TextStyle(fontSize: 14.5, color: Colors.white, height: 1.4),
-          ),
+          _LinkedText.hasLink(msg.text)
+              ? _LinkedText(
+                  msg.text,
+                  style: const TextStyle(fontSize: 14.5, color: Colors.white, height: 1.4),
+                )
+              : Text(
+                  msg.text,
+                  style: const TextStyle(fontSize: 14.5, color: Colors.white, height: 1.4),
+                ),
           const SizedBox(height: 3),
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -1742,7 +2039,14 @@ class _ImageBubbleState extends State<_ImageBubble> {
         ),
         body: Center(
           child: InteractiveViewer(
-            child: Image.network(url, fit: BoxFit.contain),
+            child: CachedNetworkImage(
+              imageUrl: url,
+              fit: BoxFit.contain,
+              placeholder: (_, _) => const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF4F8AFF))),
+              errorWidget: (_, _, _) =>
+                  const Icon(Icons.broken_image_outlined, color: Colors.white38, size: 48),
+            ),
           ),
         ),
       ),
@@ -1833,24 +2137,18 @@ class _ImageBubbleState extends State<_ImageBubble> {
               ? show
                 ? GestureDetector(
                     onTap: () => _showFullImage(context, msg.imageUrl!),
-                    child: Image.network(
-                      msg.imageUrl!,
+                    child: CachedNetworkImage(
+                      imageUrl: msg.imageUrl!,
                       width: 220, height: 180,
                       fit: BoxFit.cover,
-                      loadingBuilder: (_, child, prog) => prog == null
-                          ? child
-                          : Container(
-                              width: 220, height: 180,
-                              color: Colors.black26,
-                              child: Center(child: CircularProgressIndicator(
-                                value: prog.expectedTotalBytes != null
-                                    ? prog.cumulativeBytesLoaded /
-                                      prog.expectedTotalBytes!
-                                    : null,
-                                color: Colors.white54, strokeWidth: 2,
-                              )),
-                            ),
-                      errorBuilder: (ctx2, err, st) => Container(
+                      placeholder: (_, _) => Container(
+                        width: 220, height: 180,
+                        color: Colors.black26,
+                        child: const Center(child: CircularProgressIndicator(
+                          color: Colors.white54, strokeWidth: 2,
+                        )),
+                      ),
+                      errorWidget: (_, _, _) => Container(
                         width: 220, height: 100,
                         color: Colors.black26,
                         child: const Icon(Icons.broken_image_outlined,
@@ -2174,6 +2472,101 @@ class _StickerBubble extends StatelessWidget {
   );
 }
 
+// ── Linkified message text (taps open URLs) ───────────────────────────────────
+
+class _LinkedText extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+  const _LinkedText(this.text, {required this.style});
+
+  static final _urlRegex =
+      RegExp(r'((https?:\/\/)|(www\.))[^\s]+', caseSensitive: false);
+  // WhatsApp-style formatting: *bold* _italic_ ~strike~ `mono`.
+  static final _fmtRegex = RegExp(r'\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~|`[^`\n]+`');
+  static final _mentionRegex = RegExp(r'@[A-Za-z0-9_]+');
+  // URLs, @mentions, or formatting — matched together and rendered in order.
+  static final _richRegex = RegExp(
+      r'((https?:\/\/)|(www\.))[^\s]+|@[A-Za-z0-9_]+|\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~|`[^`\n]+`',
+      caseSensitive: false);
+
+  /// Cheap pre-check so plain messages skip the stateful path entirely.
+  static bool hasLink(String s) =>
+      _urlRegex.hasMatch(s) || _mentionRegex.hasMatch(s) || _fmtRegex.hasMatch(s);
+
+  @override
+  State<_LinkedText> createState() => _LinkedTextState();
+}
+
+class _LinkedTextState extends State<_LinkedText> {
+  final List<TapGestureRecognizer> _recognizers = [];
+
+  @override
+  void dispose() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    super.dispose();
+  }
+
+  List<InlineSpan> _spans() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+
+    final spans = <InlineSpan>[];
+    final text = widget.text;
+    var start = 0;
+    for (final m in _LinkedText._richRegex.allMatches(text)) {
+      if (m.start > start) spans.add(TextSpan(text: text.substring(start, m.start)));
+      final raw = m.group(0)!;
+      final first = raw[0];
+      if (raw.startsWith('@')) {
+        // @mention — highlighted, non-tappable.
+        spans.add(TextSpan(
+          text: raw,
+          style: const TextStyle(color: Color(0xFF9EC5FF), fontWeight: FontWeight.w600),
+        ));
+      } else if (first == '*' || first == '_' || first == '~' || first == '`') {
+        // Formatting — strip the markers and apply the style.
+        final inner = raw.substring(1, raw.length - 1);
+        final style = switch (first) {
+          '*' => const TextStyle(fontWeight: FontWeight.w700),
+          '_' => const TextStyle(fontStyle: FontStyle.italic),
+          '~' => const TextStyle(decoration: TextDecoration.lineThrough),
+          _   => const TextStyle(fontFamily: 'monospace', letterSpacing: 0.2),
+        };
+        spans.add(TextSpan(text: inner, style: style));
+      } else {
+        // URL — tappable. Don't swallow trailing sentence punctuation.
+        final link = raw.replaceAll(RegExp(r'[.,!?;:)\]]+$'), '');
+        final url  = link.startsWith('http') ? link : 'https://$link';
+        final rec  = TapGestureRecognizer()
+          ..onTap = () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        _recognizers.add(rec);
+        spans.add(TextSpan(
+          text: link,
+          style: const TextStyle(
+            color: Color(0xFF9EC5FF),
+            decoration: TextDecoration.underline,
+            decorationColor: Color(0xFF9EC5FF),
+          ),
+          recognizer: rec,
+        ));
+        final tail = raw.substring(link.length);
+        if (tail.isNotEmpty) spans.add(TextSpan(text: tail));
+      }
+      start = m.end;
+    }
+    if (start < text.length) spans.add(TextSpan(text: text.substring(start)));
+    return spans;
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      Text.rich(TextSpan(style: widget.style, children: _spans()));
+}
+
 // ── Contact card bubble ───────────────────────────────────────────────────────
 
 class _ContactBubble extends StatelessWidget {
@@ -2219,6 +2612,254 @@ class _ContactBubble extends StatelessWidget {
           const SizedBox(width: 8),
           _TimeRow(msg: msg),
         ],
+      ),
+    );
+  }
+}
+
+// ── Location bubble ───────────────────────────────────────────────────────────
+
+class _LocationBubble extends StatelessWidget {
+  final _Msg msg;
+  const _LocationBubble({required this.msg});
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = msg.location ?? {};
+    final lat = (loc['lat'] as num?)?.toDouble() ?? 0;
+    final lng = (loc['lng'] as num?)?.toDouble() ?? 0;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        if (!msg.sent && msg.senderName != null && msg.senderName!.isNotEmpty)
+          Padding(padding: const EdgeInsets.only(bottom: 2),
+            child: Text(msg.senderName!, style: const TextStyle(color: Color(0xFF86EFAC), fontSize: 12, fontWeight: FontWeight.w600))),
+        GestureDetector(
+          onTap: () => launchUrl(Uri.parse('https://maps.google.com/?q=$lat,$lng'), mode: LaunchMode.externalApplication),
+          child: Container(
+            width: 230,
+            decoration: BoxDecoration(color: Colors.white.withAlpha(14), borderRadius: BorderRadius.circular(12)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                height: 90,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E3A5F),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                ),
+                child: Center(child: Icon(Icons.location_on_rounded, color: Colors.redAccent.withAlpha(230), size: 40)),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(children: [
+                  const Icon(Icons.map_outlined, size: 15, color: Color(0xFF9EC5FF)),
+                  const SizedBox(width: 6),
+                  const Expanded(child: Text('Location · open in Maps',
+                      style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600))),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Align(alignment: Alignment.centerRight, child: _TimeRow(msg: msg)),
+      ]),
+    );
+  }
+}
+
+// ── Poll bubble ───────────────────────────────────────────────────────────────
+
+class _PollBubble extends StatelessWidget {
+  final _Msg msg;
+  const _PollBubble({required this.msg});
+
+  @override
+  Widget build(BuildContext context) {
+    final myUid    = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final poll     = msg.poll ?? {};
+    final question = poll['question'] as String? ?? 'Poll';
+    final multi    = poll['multi'] == true;
+    final options  = (poll['options'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final totalVotes = options.fold<int>(0, (s, o) => s + ((o['voters'] as List?)?.length ?? 0));
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 240, maxWidth: 300),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+          if (!msg.sent && msg.senderName != null && msg.senderName!.isNotEmpty)
+            Padding(padding: const EdgeInsets.only(bottom: 2),
+              child: Text(msg.senderName!, style: const TextStyle(color: Color(0xFF86EFAC), fontSize: 12, fontWeight: FontWeight.w600))),
+          Row(children: [
+            const Icon(Icons.poll_outlined, size: 15, color: Color(0xFF9EC5FF)),
+            const SizedBox(width: 6),
+            Text(multi ? 'Poll · select many' : 'Poll · select one',
+                style: TextStyle(fontSize: 11, color: Colors.white.withAlpha(140), fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 6),
+          Text(question, style: const TextStyle(color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 10),
+          ...options.asMap().entries.map((e) {
+            final i       = e.key;
+            final o       = e.value;
+            final voters  = (o['voters'] as List?)?.cast<String>() ?? [];
+            final voted   = voters.contains(myUid);
+            final pct     = totalVotes == 0 ? 0.0 : voters.length / totalVotes;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: GestureDetector(
+                onTap: () => ChatService.votePoll(msg.chatId, msg.id, i),
+                child: Stack(children: [
+                  Container(
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withAlpha(14),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: voted ? const Color(0xFF4F8AFF) : Colors.white.withAlpha(30)),
+                    ),
+                  ),
+                  // Fill bar
+                  FractionallySizedBox(
+                    widthFactor: pct.clamp(0.0, 1.0),
+                    child: Container(height: 38,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2563EB).withAlpha(voted ? 90 : 55),
+                        borderRadius: BorderRadius.circular(10))),
+                  ),
+                  Positioned.fill(child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(children: [
+                      if (voted) const Icon(Icons.check_circle_rounded, size: 15, color: Color(0xFF4F8AFF)),
+                      if (voted) const SizedBox(width: 6),
+                      Expanded(child: Text(o['text'] as String? ?? '',
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white, fontSize: 13))),
+                      Text('${voters.length}', style: TextStyle(color: Colors.white.withAlpha(180), fontSize: 12, fontWeight: FontWeight.w700)),
+                    ]),
+                  )),
+                ]),
+              ),
+            );
+          }),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('$totalVotes vote${totalVotes == 1 ? '' : 's'}',
+                style: TextStyle(color: Colors.white.withAlpha(130), fontSize: 11)),
+            _TimeRow(msg: msg),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Event bubble ──────────────────────────────────────────────────────────────
+
+class _EventBubble extends StatelessWidget {
+  final _Msg msg;
+  const _EventBubble({required this.msg});
+
+  static const _months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+  @override
+  Widget build(BuildContext context) {
+    final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final ev    = msg.event ?? {};
+    final title = ev['title'] as String? ?? 'Event';
+    final ts    = ev['dateTime'] as Timestamp?;
+    final dt    = ts?.toDate();
+    final loc   = ev['location'] as String? ?? '';
+    final desc  = ev['description'] as String? ?? '';
+    final roomId = ev['callRoomId'] as String?;
+    final rsvp  = Map<String, dynamic>.from(ev['rsvp'] as Map? ?? {});
+    final myRsvp = rsvp[myUid] as String?;
+    final going = rsvp.values.where((v) => v == 'going').length;
+
+    String timeLabel = '';
+    if (dt != null) {
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      timeLabel = '${dt.day} ${_months[dt.month - 1]} · $h:$m';
+    }
+
+    Widget rsvpBtn(String value, String label, IconData icon) {
+      final on = myRsvp == value;
+      return Expanded(child: GestureDetector(
+        onTap: () => ChatService.rsvpEvent(msg.chatId, msg.id, value),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 2),
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          decoration: BoxDecoration(
+            color: on ? const Color(0xFF2563EB).withAlpha(70) : Colors.white.withAlpha(14),
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: on ? const Color(0xFF4F8AFF) : Colors.white.withAlpha(30)),
+          ),
+          child: Column(children: [
+            Icon(icon, size: 15, color: on ? Colors.white : Colors.white.withAlpha(170)),
+            const SizedBox(height: 2),
+            Text(label, style: TextStyle(fontSize: 10, color: on ? Colors.white : Colors.white.withAlpha(170), fontWeight: FontWeight.w600)),
+          ]),
+        ),
+      ));
+    }
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 240, maxWidth: 300),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+          if (!msg.sent && msg.senderName != null && msg.senderName!.isNotEmpty)
+            Padding(padding: const EdgeInsets.only(bottom: 2),
+              child: Text(msg.senderName!, style: const TextStyle(color: Color(0xFF86EFAC), fontSize: 12, fontWeight: FontWeight.w600))),
+          Row(children: [
+            Container(
+              width: 42, height: 42,
+              decoration: BoxDecoration(color: const Color(0xFF2563EB).withAlpha(50), borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.event_rounded, color: Color(0xFF9EC5FF), size: 22),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700), maxLines: 2, overflow: TextOverflow.ellipsis),
+              if (timeLabel.isNotEmpty) Text(timeLabel, style: const TextStyle(color: Color(0xFF9EC5FF), fontSize: 12, fontWeight: FontWeight.w600)),
+            ])),
+          ]),
+          if (loc.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(children: [
+              Icon(Icons.location_on_outlined, size: 13, color: Colors.white.withAlpha(150)),
+              const SizedBox(width: 4),
+              Expanded(child: Text(loc, style: TextStyle(color: Colors.white.withAlpha(180), fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis)),
+            ]),
+          ],
+          if (desc.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(desc, style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 12), maxLines: 3, overflow: TextOverflow.ellipsis),
+          ],
+          const SizedBox(height: 10),
+          Row(children: [
+            rsvpBtn('going', 'Going', Icons.check_rounded),
+            rsvpBtn('maybe', 'Maybe', Icons.help_outline_rounded),
+            rsvpBtn('no',    'No',    Icons.close_rounded),
+          ]),
+          if (roomId != null && roomId.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            SizedBox(width: double.infinity, child: OutlinedButton.icon(
+              onPressed: () {
+                final me = FirebaseAuth.instance.currentUser;
+                if (me == null) return;
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => LiveSessionScreen(courseId: title, roomId: roomId),
+                ));
+              },
+              icon: const Icon(Icons.videocam_rounded, size: 16),
+              style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF4F8AFF), side: const BorderSide(color: Color(0xFF4F8AFF))),
+              label: const Text('Join call'),
+            )),
+          ],
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('$going going', style: TextStyle(color: Colors.white.withAlpha(130), fontSize: 11)),
+            _TimeRow(msg: msg),
+          ]),
+        ]),
       ),
     );
   }
@@ -2617,6 +3258,17 @@ class _MiniAvatar extends StatelessWidget {
 
 // ── Data model ────────────────────────────────────────────────────────────────
 
+// One-line preview label for a message (used in reply quotes, forwards, previews).
+String _msgPreview(_Msg m) =>
+    m.isVoice   ? '🎤 Voice message'
+    : m.isImage   ? '📷 Photo'
+    : m.isVideo   ? '🎬 Video'
+    : m.isContact ? '👤 Contact'
+    : m.isPoll    ? '📊 ${m.poll?['question'] ?? 'Poll'}'
+    : m.isEvent   ? '📅 ${m.event?['title'] ?? 'Event'}'
+    : m.isLocation ? '📍 Location'
+    : m.text;
+
 class _Msg {
   final String id;
   final String text;
@@ -2639,7 +3291,14 @@ class _Msg {
   final String? senderName;
   final _Msg? replyTo;
   final Map<String, int>? reactions;
+  final Map<String, dynamic>? poll;
+  final Map<String, dynamic>? event;
+  final Map<String, dynamic>? location;
   final DateTime createdAt;
+
+  bool get isPoll     => poll  != null;
+  bool get isEvent    => event != null;
+  bool get isLocation => location != null;
 
   _Msg({
     required this.id,
@@ -2663,6 +3322,9 @@ class _Msg {
     this.senderName,
     this.replyTo,
     this.reactions,
+    this.poll,
+    this.event,
+    this.location,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -2712,6 +3374,9 @@ class _Msg {
       isVideo:         type == 'video',
       isSticker:       type == 'sticker',
       isContact:       type == 'contact',
+      poll:            d['poll']     is Map ? Map<String, dynamic>.from(d['poll']     as Map) : null,
+      event:           d['event']    is Map ? Map<String, dynamic>.from(d['event']    as Map) : null,
+      location:        d['location'] is Map ? Map<String, dynamic>.from(d['location'] as Map) : null,
       edited:          (d['edited'] as bool?) == true,
       viewOnce:        (d['viewOnce'] as bool?) == true,
       viewOnceViewed:  List<String>.from(
@@ -2738,21 +3403,26 @@ class _AttachOption extends StatelessWidget {
   const _AttachOption({required this.icon, required this.label, required this.color, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Column(children: [
-      Container(
-        width: 60, height: 60,
-        decoration: BoxDecoration(
-          color: color.withAlpha(30),
-          shape: BoxShape.circle,
-          border: Border.all(color: color.withAlpha(60)),
+  Widget build(BuildContext context) => SizedBox(
+    width: 74, // fixed cell so the Wrap forms a tidy 4-per-row grid
+    child: GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(children: [
+        Container(
+          width: 56, height: 56,
+          decoration: BoxDecoration(
+            color: color.withAlpha(30),
+            shape: BoxShape.circle,
+            border: Border.all(color: color.withAlpha(60)),
+          ),
+          child: Icon(icon, color: color, size: 26),
         ),
-        child: Icon(icon, color: color, size: 28),
-      ),
-      const SizedBox(height: 8),
-      Text(label, style: TextStyle(color: Colors.white.withAlpha(180), fontSize: 13, fontWeight: FontWeight.w600)),
-    ]),
+        const SizedBox(height: 8),
+        Text(label, textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white.withAlpha(180), fontSize: 12, fontWeight: FontWeight.w600)),
+      ]),
+    ),
   );
 }
 
@@ -2981,6 +3651,8 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
   List<Map<String, dynamic>> _mediaItems = [];
   List<Map<String, dynamic>> _groupMembers = [];
   List<String> _adminUids = [];
+  bool _adminsOnly = false; // only admins can send in this group
+  bool _requireApproval = false; // new members need admin approval
   final _localAuth = LocalAuthentication();
 
   @override
@@ -3104,6 +3776,8 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
     if (!mounted) return;
     setState(() {
       _adminUids = adminUids;
+      _adminsOnly = (data['sendPolicy'] as String?) == 'admins';
+      _requireApproval = (data['requireApproval'] as bool?) == true;
       _groupMembers = snaps
           .where((s) => s.exists)
           .map((s) => {'uid': s.id, ...s.data()!})
@@ -3606,10 +4280,10 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(10),
-                            child: Image.network(
-                              _mediaItems[i]['imageUrl'] as String,
+                            child: CachedNetworkImage(
+                              imageUrl: _mediaItems[i]['imageUrl'] as String,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, e, s) => Icon(
+                              errorWidget: (_, _, _) => Icon(
                                   Icons.image_outlined,
                                   color: Colors.white.withAlpha(60), size: 30),
                             ),
@@ -3847,6 +4521,65 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
               onChanged: (_) => _toggleChatLock(),
             ),
 
+            // ── Group send permission (admins only) ─────────────────────────
+            if (widget.isGroup && _adminUids.contains(FirebaseAuth.instance.currentUser?.uid))
+              SwitchListTile(
+                secondary: const Icon(Icons.admin_panel_settings_outlined, color: Colors.white70),
+                title: const Text('Only admins can send', style: TextStyle(color: Colors.white)),
+                subtitle: Text('Turn the group into an announcement channel.',
+                    style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12)),
+                value: _adminsOnly,
+                activeThumbColor: const Color(0xFF4F8AFF),
+                onChanged: (v) async {
+                  setState(() => _adminsOnly = v);
+                  await ChatService.setGroupSendPolicy(widget.chatId, v);
+                },
+              ),
+
+            // ── Approve new members (invite-link joins) ─────────────────────
+            if (widget.isGroup && _adminUids.contains(FirebaseAuth.instance.currentUser?.uid))
+              SwitchListTile(
+                secondary: const Icon(Icons.how_to_reg_outlined, color: Colors.white70),
+                title: const Text('Approve new members', style: TextStyle(color: Colors.white)),
+                subtitle: Text('People who use the invite link need your approval.',
+                    style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12)),
+                value: _requireApproval,
+                activeThumbColor: const Color(0xFF4F8AFF),
+                onChanged: (v) async {
+                  setState(() => _requireApproval = v);
+                  await ChatService.setRequireApproval(widget.chatId, v);
+                },
+              ),
+
+            // ── Pending join requests (admins) ──────────────────────────────
+            if (widget.isGroup && _adminUids.contains(FirebaseAuth.instance.currentUser?.uid))
+              StreamBuilder<List<Map<String, dynamic>>>(
+                stream: ChatService.joinRequestsStream(widget.chatId),
+                builder: (ctx, snap) {
+                  final reqs = snap.data ?? [];
+                  if (reqs.isEmpty) return const SizedBox.shrink();
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      child: Text('JOIN REQUESTS (${reqs.length})',
+                          style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+                    ),
+                    ...reqs.map((r) => ListTile(
+                      leading: CircleAvatar(radius: 18, backgroundColor: const Color(0xFF2563EB),
+                        child: Text((r['name'] as String? ?? '?').isNotEmpty ? (r['name'] as String)[0].toUpperCase() : '?',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700))),
+                      title: Text(r['name'] as String? ?? 'Someone', style: const TextStyle(color: Colors.white)),
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(icon: const Icon(Icons.check_circle_rounded, color: Color(0xFF34D399)),
+                          onPressed: () => ChatService.approveJoinRequest(widget.chatId, r['uid'] as String, r['name'] as String? ?? 'Member')),
+                        IconButton(icon: const Icon(Icons.cancel_rounded, color: Colors.redAccent),
+                          onPressed: () => ChatService.rejectJoinRequest(widget.chatId, r['uid'] as String)),
+                      ]),
+                    )),
+                  ]);
+                },
+              ),
+
             Divider(color: Colors.white.withAlpha(12), height: 28),
 
             // ── Group invite link ──────────────────────────────────────────
@@ -4025,8 +4758,8 @@ class _MediaGallerySheetState extends State<_MediaGallerySheet>
                                 onTap: () => _openImage(context, url),
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(6),
-                                  child: Image.network(url, fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) => Container(
+                                  child: CachedNetworkImage(imageUrl: url, fit: BoxFit.cover,
+                                      errorWidget: (_, _, _) => Container(
                                           color: Colors.white.withAlpha(10),
                                           child: const Icon(Icons.broken_image_outlined,
                                               color: Colors.white38))),
@@ -4084,8 +4817,8 @@ class _MediaGallerySheetState extends State<_MediaGallerySheet>
         child: GestureDetector(
           onTap: () => Navigator.pop(context),
           child: InteractiveViewer(
-            child: Image.network(url, fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) =>
+            child: CachedNetworkImage(imageUrl: url, fit: BoxFit.contain,
+                errorWidget: (_, _, _) =>
                     const Icon(Icons.broken_image_outlined, color: Colors.white38, size: 60)),
           ),
         ),
@@ -4175,13 +4908,11 @@ class _GifPickerSheetState extends State<_GifPickerSheet> {
                         },
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.network(_urls[i], fit: BoxFit.cover,
-                              loadingBuilder: (_, child, progress) => progress == null
-                                  ? child
-                                  : Container(color: Colors.white.withAlpha(8),
-                                      child: const Center(
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2, color: Color(0xFF4F8AFF))))),
+                          child: CachedNetworkImage(imageUrl: _urls[i], fit: BoxFit.cover,
+                              placeholder: (_, _) => Container(color: Colors.white.withAlpha(8),
+                                  child: const Center(
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2, color: Color(0xFF4F8AFF))))),
                         ),
                       ),
                     ),
@@ -4414,5 +5145,152 @@ class _ForwardSheetState extends State<_ForwardSheet> {
         ]),
       ),
     );
+  }
+}
+
+// ── Poll composer ─────────────────────────────────────────────────────────────
+
+class _PollComposerSheet extends StatefulWidget {
+  final void Function(String question, List<String> options, bool multi) onSubmit;
+  const _PollComposerSheet({required this.onSubmit});
+  @override
+  State<_PollComposerSheet> createState() => _PollComposerSheetState();
+}
+
+class _PollComposerSheetState extends State<_PollComposerSheet> {
+  final _q = TextEditingController();
+  final _opts = <TextEditingController>[TextEditingController(), TextEditingController()];
+  bool _multi = false;
+
+  @override
+  void dispose() { _q.dispose(); for (final c in _opts) { c.dispose(); } super.dispose(); }
+
+  bool get _valid =>
+      _q.text.trim().isNotEmpty && _opts.where((c) => c.text.trim().isNotEmpty).length >= 2;
+
+  Widget _field(TextEditingController c, String hint) => Container(
+    decoration: BoxDecoration(color: Colors.white.withAlpha(16), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white.withAlpha(30))),
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    child: TextField(controller: c, style: const TextStyle(color: Colors.white, fontSize: 14), onChanged: (_) => setState(() {}),
+      decoration: InputDecoration(hintText: hint, hintStyle: TextStyle(color: Colors.white.withAlpha(90)), border: InputBorder.none)),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white.withAlpha(40), borderRadius: BorderRadius.circular(2)))),
+        const SizedBox(height: 12),
+        const Text('Create poll', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        _field(_q, 'Ask a question'),
+        const SizedBox(height: 10),
+        ..._opts.asMap().entries.map((e) => Padding(padding: const EdgeInsets.only(bottom: 8), child: _field(e.value, 'Option ${e.key + 1}'))),
+        if (_opts.length < 8)
+          TextButton.icon(onPressed: () => setState(() => _opts.add(TextEditingController())),
+              icon: const Icon(Icons.add_rounded, size: 16, color: Color(0xFF4F8AFF)),
+              label: const Text('Add option', style: TextStyle(color: Color(0xFF4F8AFF)))),
+        SwitchListTile(contentPadding: EdgeInsets.zero,
+          title: const Text('Allow multiple answers', style: TextStyle(color: Colors.white, fontSize: 14)),
+          value: _multi, activeThumbColor: const Color(0xFF4F8AFF), onChanged: (v) => setState(() => _multi = v)),
+        const SizedBox(height: 6),
+        SizedBox(width: double.infinity, child: ElevatedButton(
+          onPressed: _valid ? () {
+            Navigator.pop(context);
+            widget.onSubmit(_q.text.trim(), _opts.map((c) => c.text.trim()).where((t) => t.isNotEmpty).toList(), _multi);
+          } : null,
+          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), disabledBackgroundColor: const Color(0xFF2563EB).withAlpha(80), padding: const EdgeInsets.symmetric(vertical: 14)),
+          child: const Text('Send poll', style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white)),
+        )),
+      ])),
+    ));
+  }
+}
+
+// ── Event composer ────────────────────────────────────────────────────────────
+
+class _EventComposerSheet extends StatefulWidget {
+  final void Function(String title, DateTime dateTime, String location, String description, bool addCall) onSubmit;
+  const _EventComposerSheet({required this.onSubmit});
+  @override
+  State<_EventComposerSheet> createState() => _EventComposerSheetState();
+}
+
+class _EventComposerSheetState extends State<_EventComposerSheet> {
+  final _title = TextEditingController();
+  final _loc   = TextEditingController();
+  final _desc  = TextEditingController();
+  DateTime  _date = DateTime.now().add(const Duration(days: 1));
+  TimeOfDay _time = const TimeOfDay(hour: 9, minute: 0);
+  bool _addCall = false;
+
+  @override
+  void dispose() { _title.dispose(); _loc.dispose(); _desc.dispose(); super.dispose(); }
+
+  DateTime get _dateTime => DateTime(_date.year, _date.month, _date.day, _time.hour, _time.minute);
+
+  Future<void> _pickDate() async {
+    final d = await showDatePicker(context: context, initialDate: _date,
+        firstDate: DateTime.now().subtract(const Duration(days: 1)), lastDate: DateTime.now().add(const Duration(days: 365)));
+    if (d != null) setState(() => _date = d);
+  }
+
+  Future<void> _pickTime() async {
+    final t = await showTimePicker(context: context, initialTime: _time);
+    if (t != null) setState(() => _time = t);
+  }
+
+  Widget _field(TextEditingController c, String hint) => Container(
+    decoration: BoxDecoration(color: Colors.white.withAlpha(16), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white.withAlpha(30))),
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    child: TextField(controller: c, style: const TextStyle(color: Colors.white, fontSize: 14), onChanged: (_) => setState(() {}),
+      decoration: InputDecoration(hintText: hint, hintStyle: TextStyle(color: Colors.white.withAlpha(90)), border: InputBorder.none)),
+  );
+
+  Widget _pickTile(IconData icon, String label, VoidCallback onTap) => GestureDetector(onTap: onTap, child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    decoration: BoxDecoration(color: Colors.white.withAlpha(16), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white.withAlpha(30))),
+    child: Row(children: [Icon(icon, size: 16, color: Colors.white.withAlpha(160)), const SizedBox(width: 8),
+      Expanded(child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 13), overflow: TextOverflow.ellipsis))]),
+  ));
+
+  @override
+  Widget build(BuildContext context) {
+    final dl = '${_date.day}/${_date.month}/${_date.year}';
+    final tl = '${_time.hour.toString().padLeft(2, '0')}:${_time.minute.toString().padLeft(2, '0')}';
+    return SafeArea(child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white.withAlpha(40), borderRadius: BorderRadius.circular(2)))),
+        const SizedBox(height: 12),
+        const Text('Create event', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        _field(_title, 'Event title'),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: _pickTile(Icons.calendar_today_rounded, dl, _pickDate)),
+          const SizedBox(width: 8),
+          Expanded(child: _pickTile(Icons.access_time_rounded, tl, _pickTime)),
+        ]),
+        const SizedBox(height: 10),
+        _field(_loc, 'Location (optional)'),
+        const SizedBox(height: 10),
+        _field(_desc, 'Description (optional)'),
+        SwitchListTile(contentPadding: EdgeInsets.zero,
+          title: const Text('Add video call link', style: TextStyle(color: Colors.white, fontSize: 14)),
+          subtitle: Text('Members can join a live session', style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12)),
+          value: _addCall, activeThumbColor: const Color(0xFF4F8AFF), onChanged: (v) => setState(() => _addCall = v)),
+        const SizedBox(height: 6),
+        SizedBox(width: double.infinity, child: ElevatedButton(
+          onPressed: _title.text.trim().isEmpty ? null : () {
+            Navigator.pop(context);
+            widget.onSubmit(_title.text.trim(), _dateTime, _loc.text.trim(), _desc.text.trim(), _addCall);
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), disabledBackgroundColor: const Color(0xFF2563EB).withAlpha(80), padding: const EdgeInsets.symmetric(vertical: 14)),
+          child: const Text('Send event', style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white)),
+        )),
+      ])),
+    ));
   }
 }

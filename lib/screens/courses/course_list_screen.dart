@@ -1,9 +1,8 @@
 import 'dart:ui';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
+import '../../services/courses_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
@@ -19,34 +18,22 @@ Color _colorFor(String subject) {
   return _kPalette[idx];
 }
 
-// ── Service helper — reads unique subjects from timetable ─────────────────────
-Stream<List<_Course>> _timetableCoursesStream() {
-  final uid = FirebaseAuth.instance.currentUser?.uid;
-  if (uid == null) return Stream.error('Not logged in');
-
-  return FirebaseFirestore.instance
-      .collection('users')
-      .doc(uid)
-      .collection('timetable')
-      .snapshots()
-      .map((snap) {
-    final seen  = <String>{};
-    final out   = <_Course>[];
-    for (final doc in snap.docs) {
-      final d       = doc.data();
-      final subject = (d['subject'] as String? ?? '').trim();
-      final code    = (d['courseCode'] as String? ?? '').trim();
-      if (subject.isEmpty || seen.contains(subject)) continue;
-      seen.add(subject);
-      out.add(_Course(
-        subject:  subject,
-        code:     code.isNotEmpty ? code : subject,
-        type:     d['type']    as String? ?? 'Lecture',
-        venue:    d['venue']   as String? ?? '',
-        color:    _colorFor(subject),
-      ));
-    }
-    out.sort((a, b) => a.subject.compareTo(b.subject));
+// ── Service helper — the student's enrolled catalog courses ──────────────────
+Stream<List<_Course>> _enrolledCoursesStream() {
+  return CoursesService.enrolledStream().map((list) {
+    final out = list.map((e) {
+      final code  = (e['code'] as String? ?? '').trim();
+      final title = (e['title'] as String? ?? '').trim();
+      final school = (e['school'] as String? ?? '').trim();
+      return _Course(
+        subject: title.isNotEmpty ? title : code,
+        code:    code,
+        type:    school.isNotEmpty ? school : 'Course',
+        venue:   '',
+        color:   _colorFor(code.isNotEmpty ? code : title),
+      );
+    }).toList();
+    out.sort((a, b) => a.code.compareTo(b.code));
     return out;
   });
 }
@@ -77,7 +64,7 @@ class _CourseListScreenState extends State<CourseListScreen> {
             _buildHeader(),
             Expanded(
               child: StreamBuilder<List<_Course>>(
-                stream: _timetableCoursesStream(),
+                stream: _enrolledCoursesStream(),
                 builder: (ctx, snap) {
                   if (snap.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF)));
@@ -138,9 +125,9 @@ class _CourseListScreenState extends State<CourseListScreen> {
                 const Text('My Courses', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                 const Spacer(),
                 TextButton.icon(
-                  onPressed: () => context.push('/planner'),
-                  icon: const Icon(Icons.edit_calendar_outlined, size: 16, color: Color(0xFF4F8AFF)),
-                  label: const Text('Manage', style: TextStyle(color: Color(0xFF4F8AFF), fontSize: 13)),
+                  onPressed: () => context.push('/courses/browse'),
+                  icon: const Icon(Icons.add_rounded, size: 16, color: Color(0xFF4F8AFF)),
+                  label: const Text('Browse', style: TextStyle(color: Color(0xFF4F8AFF), fontSize: 13)),
                   style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
                 ),
               ]),
@@ -189,15 +176,15 @@ class _CourseListScreenState extends State<CourseListScreen> {
               style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           Text(
-            'Courses are pulled from your timetable.\nAdd your class schedule in the Planner first.',
+            'Browse the course catalog and enrol in your courses.\nThey\'ll appear here with past papers and AI tools.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white.withAlpha(140), height: 1.5),
           ),
           const SizedBox(height: 24),
           ElevatedButton.icon(
-            onPressed: () => context.push('/planner'),
-            icon: const Icon(Icons.add_rounded, size: 18),
-            label: const Text('Go to Planner'),
+            onPressed: () => context.push('/courses/browse'),
+            icon: const Icon(Icons.menu_book_rounded, size: 18),
+            label: const Text('Browse Catalog'),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF2563EB),
               foregroundColor: Colors.white,
@@ -228,7 +215,7 @@ class _CourseCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         // Tap the card to open the course's past papers; the quick-action
         // buttons jump to Papers / AI Quiz.
-        onTap: () => context.push('/courses/${Uri.encodeComponent(c.subject)}/papers'),
+        onTap: () => context.push('/courses/${Uri.encodeComponent(c.code)}/papers'),
         child: Row(children: [
           // Icon block
           Container(
@@ -271,13 +258,13 @@ class _CourseCard extends StatelessWidget {
             _ActionBtn(
               icon: Icons.picture_as_pdf_outlined,
               color: const Color(0xFFEF4444),
-              onTap: () => context.push('/courses/${Uri.encodeComponent(c.subject)}/papers'),
+              onTap: () => context.push('/courses/${Uri.encodeComponent(c.code)}/papers'),
             ),
             const SizedBox(height: 6),
             _ActionBtn(
               icon: Icons.psychology_alt_outlined,
               color: const Color(0xFFB794F4),
-              onTap: () => context.push('/ai/quiz/${Uri.encodeComponent(c.subject)}'),
+              onTap: () => context.push('/ai/quiz/${Uri.encodeComponent(c.code)}'),
             ),
           ]),
         ]),

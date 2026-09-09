@@ -1,9 +1,11 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import '../config.dart';
 
-const int kZegoAppId     = 1781765877;
-const String kZegoAppSign = 'cdc671cbee473400e34f53d71a0bcae66372a3fd4a22d47af81d8bf485320ea2';
+// Sourced from AppConfig so real production creds can be supplied via
+// --dart-define=ZEGO_APP_ID / ZEGO_APP_SIGN without editing source.
+const int kZegoAppId      = AppConfig.zegoAppId;
+const String kZegoAppSign = AppConfig.zegoAppSign;
 
 class ZegoService {
   static final navigatorKey = GlobalKey<NavigatorState>();

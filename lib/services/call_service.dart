@@ -128,6 +128,9 @@ class CallService {
   }
 
   // ── Missed calls count stream ─────────────────────────────────────────────
+  // Counts only missed calls the user hasn't seen yet. `missedSeen` is written
+  // client-side (see markMissedCallsSeen) so no extra index/field is required —
+  // docs without the field are treated as unseen.
 
   static Stream<int> missedCallsCountStream() {
     return _db
@@ -135,7 +138,26 @@ class CallService {
         .where('calleeUid', isEqualTo: _myUid)
         .where('status', isEqualTo: 'missed')
         .snapshots()
-        .map((s) => s.docs.length);
+        .map((s) => s.docs.where((d) => (d.data()['missedSeen'] as bool?) != true).length);
+  }
+
+  /// Marks every unseen missed call for the current user as seen, clearing the
+  /// CALLS-tab badge. Called when the user opens the Calls tab.
+  static Future<void> markMissedCallsSeen() async {
+    try {
+      final snap = await _db
+          .collection('calls')
+          .where('calleeUid', isEqualTo: _myUid)
+          .where('status', isEqualTo: 'missed')
+          .get();
+      final unseen = snap.docs.where((d) => (d.data()['missedSeen'] as bool?) != true).toList();
+      if (unseen.isEmpty) return;
+      final batch = _db.batch();
+      for (final d in unseen) {
+        batch.update(d.reference, {'missedSeen': true});
+      }
+      await batch.commit();
+    } catch (_) {}
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

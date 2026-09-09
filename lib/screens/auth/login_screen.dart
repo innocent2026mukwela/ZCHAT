@@ -364,13 +364,43 @@ class _SignInForm extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 32),
-          Text(
-            'By continuing, you agree to our Terms of Service and Privacy Policy.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withAlpha(80),
-              height: 1.6,
+          GestureDetector(
+            onTap: () => showDialog(
+              context: context,
+              builder: (dctx) => AlertDialog(
+                backgroundColor: const Color(0xFF0E1829),
+                title: const Text('Terms & Privacy', style: TextStyle(color: Colors.white, fontSize: 16)),
+                content: const SingleChildScrollView(
+                  child: Text(
+                    'ZCHAT is a University of Zambia student communication and study platform.\n\n'
+                    'By using ZCHAT you agree to use it respectfully and lawfully, and you consent to '
+                    'the storage of your profile, messages, and study data to provide the service. Your '
+                    'phone number is used only to create and secure your account. We do not sell your '
+                    'data, and you can request account deletion at any time.\n\n'
+                    'The full Terms of Service and Privacy Policy will be published at zchat.unza.zm.',
+                    style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dctx),
+                    child: const Text('Close', style: TextStyle(color: Color(0xFF4F8AFF))),
+                  ),
+                ],
+              ),
+            ),
+            child: Text.rich(
+              TextSpan(
+                style: TextStyle(fontSize: 12, color: Colors.white.withAlpha(80), height: 1.6),
+                children: const [
+                  TextSpan(text: 'By continuing, you agree to our '),
+                  TextSpan(text: 'Terms of Service', style: TextStyle(color: Color(0xFF4F8AFF), fontWeight: FontWeight.w600)),
+                  TextSpan(text: ' and '),
+                  TextSpan(text: 'Privacy Policy', style: TextStyle(color: Color(0xFF4F8AFF), fontWeight: FontWeight.w600)),
+                  TextSpan(text: '.'),
+                ],
+              ),
+              textAlign: TextAlign.center,
             ),
           ),
         ],

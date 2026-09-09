@@ -45,7 +45,9 @@ class _OtpScreenState extends State<OtpScreen> {
     setState(() { _loading = true; _error = null; });
     try {
       final result = await AuthService.verifyOtp(widget.phoneNumber, otp);
-      await ZegoService.init();
+      // Zego is call infrastructure — never let its init failure (web, no
+      // network, bad creds) block an otherwise-valid login.
+      try { await ZegoService.init(); } catch (_) {}
       if (!mounted) return;
 
       // Two-step verification: if user has a PIN, require it before entry

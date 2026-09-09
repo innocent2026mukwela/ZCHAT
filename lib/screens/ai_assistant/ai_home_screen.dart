@@ -236,7 +236,7 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
           () => _pickCourseThen((c) => '/ai/summaries/$c')),
       _Tool('Past Papers', 'Browse & practice', Icons.description_rounded, const Color(0xFF16A34A),
           () => context.push('/courses')),
-      _Tool('Exam Mode', 'Timed practice exams', Icons.timer_rounded, const Color(0xFFF59E0B),
+      _Tool('AI Practice', 'Timed AI practice', Icons.timer_rounded, const Color(0xFFF59E0B),
           () => _pickCourseThen((c) => '/exam-simulator/$c')),
       _Tool('Study Planner', 'AI-personalised plans', Icons.event_note_rounded, const Color(0xFFEC4899),
           () => _pickCourseThen((c) => '/adaptive-plan/$c')),

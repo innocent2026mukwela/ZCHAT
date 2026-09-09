@@ -12,13 +12,13 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_storage
   flutter_tts
   flutter_volume_controller
+  geolocator_windows
   local_auth_windows
   permission_handler_windows
   record_windows
   screen_brightness_windows
   share_plus
   speech_to_text_windows
-  syncfusion_pdfviewer_windows
   url_launcher_windows
   zego_express_engine
   zego_zim

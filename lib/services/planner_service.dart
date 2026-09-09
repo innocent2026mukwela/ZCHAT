@@ -135,12 +135,29 @@ class PlannerService {
   static int _notifId(String prefix, String docId) =>
       (prefix + docId).hashCode.abs() % 100000;
 
+  /// Whether the user has Planner reminders enabled (Profile → Notifications).
+  static Future<bool> _remindersEnabled() async {
+    try {
+      final doc = await _db.collection('users').doc(_uid).get();
+      return (doc.data()?['notifReminders'] as bool?) ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Cancels every pending planner reminder — called when the user turns the
+  /// "Planner reminders" switch off.
+  static Future<void> cancelAllReminders() async {
+    if (_notifInitialised) await _notif.cancelAll();
+  }
+
   // Note: matchDateTimeComponents.dayOfWeekAndTime fires at the wall-clock time
   // stored at scheduling time. If the device observes DST, reminders may fire
   // 1 hour early or late on the changeover weekend — this is a known limitation
   // of the flutter_local_notifications zonedSchedule API.
   static Future<void> _scheduleWeeklyReminder(String id, Map<String, dynamic> data) async {
     try {
+      if (!await _remindersEnabled()) return;
       final dayIndex  = data['dayIndex'] as int? ?? 1;  // 1=Mon … 7=Sun
       final startTime = data['startTime'] as String? ?? '08:00';
       final parts     = startTime.split(':');
@@ -171,6 +188,7 @@ class PlannerService {
 
   static Future<void> _scheduleOneTimeReminder(String id, Map<String, dynamic> data) async {
     try {
+      if (!await _remindersEnabled()) return;
       final ts = data['dateTime'] as Timestamp?;
       if (ts == null) return;
       final dt = ts.toDate().subtract(const Duration(minutes: 10));

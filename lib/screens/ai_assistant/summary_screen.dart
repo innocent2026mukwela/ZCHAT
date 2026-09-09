@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/ai_service.dart';
+import '../../services/courses_service.dart';
 import '../../utils/glass.dart';
+import '../../widgets/ai_markdown.dart';
 
 class SummaryScreen extends StatefulWidget {
   final String courseId;
@@ -25,7 +27,8 @@ class _SummaryScreenState extends State<SummaryScreen> {
   Future<void> _load() async {
     setState(() { _summaries = null; _error = null; });
     try {
-      final data = await AiService.generateCourseSummary(courseId: widget.courseId);
+      final data = await AiService.generateCourseSummary(
+          courseId: await CoursesService.descriptiveLabel(widget.courseId));
       if (mounted) setState(() => _summaries = data);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
@@ -52,7 +55,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                     child: Row(children: [
                       IconButton(icon: const Icon(Icons.arrow_back_rounded, color: Colors.white), onPressed: () => Navigator.of(context).pop()),
                       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('Summaries – ${widget.courseId}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                        Text('Summaries – ${widget.courseId}', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                         const Text('AI-generated lecture notes', style: TextStyle(color: Colors.white54, fontSize: 11)),
                       ])),
                       IconButton(icon: const Icon(Icons.refresh_rounded, color: Colors.white), onPressed: _load),
@@ -158,8 +161,12 @@ class _SummaryCardState extends State<_SummaryCard> {
         if (body.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
-            child: Text(body, maxLines: _expanded ? null : 2, overflow: _expanded ? null : TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.white.withAlpha(_expanded ? 220 : 160), fontSize: 13, height: 1.6)),
+            // Collapsed: plain truncated preview (markdown can't ellipsis).
+            // Expanded: full markdown rendering of the AI summary.
+            child: _expanded
+                ? AiMarkdown(body, color: Colors.white.withAlpha(220), fontSize: 13, height: 1.6)
+                : Text(body, maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 13, height: 1.6)),
           ),
         if (tip.isNotEmpty)
           Padding(

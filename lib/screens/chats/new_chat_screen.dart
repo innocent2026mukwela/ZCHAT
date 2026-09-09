@@ -212,6 +212,54 @@ class _NewChatScreenState extends State<NewChatScreen> {
     _loadContacts();
   }
 
+  Future<void> _joinViaLink() async {
+    final ctrl = TextEditingController();
+    final link = await showDialog<String>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0E1829),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Join group via link', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: TextField(
+          controller: ctrl, autofocus: true,
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+          decoration: InputDecoration(
+            hintText: 'Paste invite link (zchat://join?…)',
+            hintStyle: TextStyle(color: Colors.white.withAlpha(90)),
+            enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF4F8AFF))),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dctx), child: const Text('Cancel', style: TextStyle(color: Colors.white54))),
+          TextButton(onPressed: () => Navigator.pop(dctx, ctrl.text.trim()), child: const Text('Join', style: TextStyle(color: Color(0xFF4F8AFF)))),
+        ],
+      ),
+    );
+    if (link == null || link.isEmpty || !mounted) return;
+
+    final uri = Uri.tryParse(link);
+    final chatId = uri?.queryParameters['chatId'];
+    final token  = uri?.queryParameters['token'];
+    if (chatId == null || token == null || !link.contains('zchat://join')) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('That doesn\'t look like a valid ZCHAT invite link.'), behavior: SnackBarBehavior.floating));
+      return;
+    }
+    try {
+      final result = await ChatService.joinViaInvite(chatId, token);
+      if (!mounted) return;
+      if (result == 'requested') {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Request sent — an admin will approve you.'), behavior: SnackBarBehavior.floating));
+      } else {
+        context.pushReplacement('/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent('Group')}');
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(e.toString().replaceFirst('Exception: ', '')), behavior: SnackBarBehavior.floating));
+    }
+  }
+
   // ── QR Scan ───────────────────────────────────────────────────────────────
 
   void _openQrScan() {
@@ -371,6 +419,10 @@ class _NewChatScreenState extends State<NewChatScreen> {
     items.add(_ListItem.action(
       icon: Icons.person_add_rounded, label: 'New contact',
       onTap: _newContact,
+    ));
+    items.add(_ListItem.action(
+      icon: Icons.link_rounded, label: 'Join group via link',
+      onTap: _joinViaLink,
     ));
 
     final onZchat = _filtered.where((e) => _zchatForEntry(e) != null).toList();

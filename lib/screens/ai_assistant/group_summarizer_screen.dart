@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../../services/ai_service.dart';
 import '../../utils/glass.dart';
+import '../../widgets/ai_markdown.dart';
 
 class GroupSummarizerScreen extends StatefulWidget {
   const GroupSummarizerScreen({super.key});
@@ -97,7 +98,7 @@ class _GroupSummarizerScreenState extends State<GroupSummarizerScreen> {
               ),
               const Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Group Summarizer', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+                  Text('Group Summarizer', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                   Text('Catch up instantly with AI', style: TextStyle(color: Colors.white54, fontSize: 11)),
                 ]),
               ),
@@ -270,7 +271,7 @@ class _GroupCard extends StatelessWidget {
                   Text('AI Summary', style: TextStyle(color: const Color(0xFF14B8A6).withAlpha(220), fontSize: 11, fontWeight: FontWeight.w700)),
                 ]),
                 const SizedBox(height: 6),
-                Text(summary!, style: TextStyle(color: Colors.white.withAlpha(185), fontSize: 13, height: 1.4)),
+                AiMarkdown(summary!, color: Colors.white.withAlpha(185), fontSize: 13, height: 1.4),
               ]),
             ),
           ],

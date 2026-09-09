@@ -66,6 +66,49 @@ class AiService {
     }
   }
 
+  /// Streaming version of [chat]. Yields events as Server-Sent-Events arrive:
+  ///   {'delta': String}                         — a chunk of the reply
+  ///   {'done': true, 'conversationId': String}  — final event
+  ///   {'error': String}                          — failure mid-stream
+  ///
+  /// On mobile this streams token-by-token; on Flutter web the http client may
+  /// buffer the response, so the reply can arrive in fewer, larger chunks.
+  static Stream<Map<String, dynamic>> chatStream({
+    required List<Map<String, String>> messages,
+    String? courseId,
+    String? conversationId,
+  }) async* {
+    final headers = await _authHeaders();
+    final req = http.Request('POST', Uri.parse('$_baseUrl/chat/stream'))
+      ..headers.addAll(headers)
+      ..body = jsonEncode({
+        'messages': messages,
+        'courseId': courseId,
+        'conversationId': conversationId,
+      });
+
+    final client = http.Client();
+    try {
+      final resp = await client.send(req).timeout(const Duration(seconds: 90));
+      if (resp.statusCode != 200) {
+        yield {'error': 'Request failed (${resp.statusCode})'};
+        return;
+      }
+      // Parse the SSE stream: lines of `data: {json}` separated by blank lines.
+      final lines = resp.stream.transform(utf8.decoder).transform(const LineSplitter());
+      await for (final line in lines) {
+        if (!line.startsWith('data:')) continue;
+        final payload = line.substring(5).trim();
+        if (payload.isEmpty) continue;
+        try {
+          yield jsonDecode(payload) as Map<String, dynamic>;
+        } catch (_) {/* ignore malformed keep-alive lines */}
+      }
+    } finally {
+      client.close();
+    }
+  }
+
   /// Lists the user's recent AI conversations (most recently active first).
   /// Each entry has: id, title, last_question, last_answer, updated_at.
   static Future<List<Map<String, dynamic>>> fetchConversations() async {

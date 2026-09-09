@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/ai_service.dart';
+import '../../services/courses_service.dart';
 import '../../utils/glass.dart';
 
 class ExamSimulatorScreen extends StatefulWidget {
@@ -41,7 +42,8 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
   Future<void> _loadQuestions() async {
     setState(() { _questions = null; _loadError = null; });
     try {
-      final data = await AiService.generateExamQuestions(courseCode: widget.courseId, numQuestions: 8);
+      final data = await AiService.generateExamQuestions(
+          courseCode: await CoursesService.descriptiveLabel(widget.courseId), numQuestions: 8);
       if (!mounted) { return; }
       final questions = data.map((m) {
         final opts = (m['options'] as List?)?.cast<String>() ?? [];
@@ -148,8 +150,8 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
             Column(
               children: [
                 _AppBar(
-                  title: _submitted ? 'Exam Results' : 'Exam Simulator',
-                  subtitle: _started && !_submitted ? _formatTime(_secondsLeft) : widget.paperTitle,
+                  title: _submitted ? 'Practice Results' : 'AI Practice',
+                  subtitle: _started && !_submitted ? _formatTime(_secondsLeft) : widget.courseId,
                 ),
                 Expanded(
                   child: _submitted
@@ -182,6 +184,7 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
               const Text('Practice under exam conditions',
                   style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
               const SizedBox(height: 12),
+              _Rule(Icons.auto_awesome_outlined, 'AI-generated questions for this course'),
               _Rule(Icons.timer_outlined, 'Time limit: 1h 30m'),
               _Rule(Icons.save_outlined, 'Results and weak topics saved to your profile'),
               _Rule(Icons.analytics_outlined, 'Results identify weak topics for a study path'),
@@ -226,7 +229,7 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
                     minimumSize: const Size(double.infinity, 52),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),
-                  child: const Text('Start Exam Mode', style: TextStyle(fontWeight: FontWeight.w800)),
+                  child: const Text('Start Practice', style: TextStyle(fontWeight: FontWeight.w800)),
                 ),
               ),
             ],
@@ -393,7 +396,8 @@ class _AdaptiveLearningPathScreenState extends State<AdaptiveLearningPathScreen>
   Future<void> _load() async {
     setState(() { _activities = null; _error = null; });
     try {
-      final data = await AiService.generateAdaptivePlan(courseId: widget.courseId, weakTopics: widget.weakTopics);
+      final data = await AiService.generateAdaptivePlan(
+          courseId: await CoursesService.descriptiveLabel(widget.courseId), weakTopics: widget.weakTopics);
       if (!mounted) { return; }
       final activities = data.map((m) => _Activity(
         topic: m['topic'] as String? ?? 'Topic',
@@ -501,7 +505,7 @@ class _AppBar extends StatelessWidget {
                 ),
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(title, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+                    Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                     Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 11)),
                   ]),
                 ),

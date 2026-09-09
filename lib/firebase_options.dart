@@ -41,46 +41,44 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyCkTnZ1vPiw7xKNurzi_o4-U0C3L-xcGos',
-    appId: '1:254721999502:web:38ddc900bcb13f222bffdf',
-    messagingSenderId: '254721999502',
-    projectId: 'zchat-c0533',
-    authDomain: 'zchat-c0533.firebaseapp.com',
-    storageBucket: 'zchat-c0533.firebasestorage.app',
+    apiKey: 'AIzaSyAUBFa6wxwkNGy_JEkVJ1Dr99S652aT9t0',
+    appId: '1:165931025:web:0c255c0c3f341560abe9b0',
+    messagingSenderId: '165931025',
+    projectId: 'zchat-2026',
+    authDomain: 'zchat-2026.firebaseapp.com',
+    storageBucket: 'zchat-2026.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyBHZA-pwvOiKHpSd2WNs-yK7B7LUTHdjWo',
-    appId: '1:254721999502:android:4e83cf62cede91432bffdf',
-    messagingSenderId: '254721999502',
-    projectId: 'zchat-c0533',
-    storageBucket: 'zchat-c0533.firebasestorage.app',
+    apiKey: 'AIzaSyBCfjIK70jCgTpezngmu1cQjKy2nkJPQ7g',
+    appId: '1:165931025:android:b85263516d796133abe9b0',
+    messagingSenderId: '165931025',
+    projectId: 'zchat-2026',
+    storageBucket: 'zchat-2026.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyBzzvjwAivPO8xf9NQ1ASv-mdrcI-JVfIQ',
-    appId: '1:254721999502:ios:afed09146acc03f52bffdf',
-    messagingSenderId: '254721999502',
-    projectId: 'zchat-c0533',
-    storageBucket: 'zchat-c0533.firebasestorage.app',
+    apiKey: 'AIzaSyDsjdHW9qbT4ppQ6kB1YNK_XxdbacZ_u2I',
+    appId: '1:165931025:ios:e6bed049ef081f6aabe9b0',
+    messagingSenderId: '165931025',
+    projectId: 'zchat-2026',
+    storageBucket: 'zchat-2026.firebasestorage.app',
     iosBundleId: 'com.unza.unzaZChat',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyBzzvjwAivPO8xf9NQ1ASv-mdrcI-JVfIQ',
-    appId: '1:254721999502:ios:afed09146acc03f52bffdf',
-    messagingSenderId: '254721999502',
-    projectId: 'zchat-c0533',
-    storageBucket: 'zchat-c0533.firebasestorage.app',
+    apiKey: 'AIzaSyDsjdHW9qbT4ppQ6kB1YNK_XxdbacZ_u2I',
+    appId: '1:165931025:ios:e6bed049ef081f6aabe9b0',
+    messagingSenderId: '165931025',
+    projectId: 'zchat-2026',
+    storageBucket: 'zchat-2026.firebasestorage.app',
     iosBundleId: 'com.unza.unzaZChat',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyCkTnZ1vPiw7xKNurzi_o4-U0C3L-xcGos',
-    appId: '1:254721999502:web:458071f7ec81e2c62bffdf',
-    messagingSenderId: '254721999502',
-    projectId: 'zchat-c0533',
-    authDomain: 'zchat-c0533.firebaseapp.com',
-    storageBucket: 'zchat-c0533.firebasestorage.app',
+    apiKey: 'AIzaSyAUBFa6wxwkNGy_JEkVJ1Dr99S652aT9t0',
+    appId: '1:165931025:web:699dae2e71f349d4abe9b0',
+    messagingSenderId: '165931025',
+    projectId: 'zchat-2026',
+    authDomain: 'zchat-2026.firebaseapp.com',
+    storageBucket: 'zchat-2026.firebasestorage.app',
   );
 }

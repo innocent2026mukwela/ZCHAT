@@ -10,12 +10,51 @@ class ThreadsService {
   static final _col = _db.collection('threads');
   static User get _me => FirebaseAuth.instance.currentUser!;
 
+  // ── Author freshness cache ─────────────────────────────────────────────────
+  // Posts denormalize authorName/authorPhotoUrl at post time, so a profile edit
+  // leaves old posts showing stale name/photo. Refresh from users/{uid} with a
+  // short TTL to keep reads low. (A Cloud Function fan-out would scale better —
+  // see IMPROVEMENTS #8.)
+  static final Map<String, Map<String, String>> _authorCache   = {};
+  static final Map<String, DateTime>             _authorCacheAt = {};
+  static const Duration _authorTtl = Duration(minutes: 5);
+
+  static Future<List<Map<String, dynamic>>> _withFreshAuthors(
+      List<Map<String, dynamic>> posts) async {
+    final now = DateTime.now();
+    final stale = <String>{};
+    for (final p in posts) {
+      final uid = p['authorUid'] as String?;
+      if (uid == null || uid.isEmpty) continue;
+      final at = _authorCacheAt[uid];
+      if (at == null || now.difference(at) > _authorTtl) stale.add(uid);
+    }
+    await Future.wait(stale.map((uid) async {
+      try {
+        final d = (await _db.collection('users').doc(uid).get()).data() ?? {};
+        final name = ((d['fullName'] as String?)?.trim().isNotEmpty ?? false)
+            ? d['fullName'] as String
+            : (d['displayName'] as String? ?? d['name'] as String? ?? '');
+        _authorCache[uid]   = {'name': name, 'photo': (d['photoUrl'] ?? d['photoURL'] ?? '') as String};
+        _authorCacheAt[uid] = now;
+      } catch (_) {}
+    }));
+    for (final p in posts) {
+      final fresh = _authorCache[p['authorUid'] as String? ?? ''];
+      if (fresh == null) continue;
+      if ((fresh['name'] ?? '').isNotEmpty) p['authorName'] = fresh['name'];
+      p['authorPhotoUrl'] = fresh['photo'];
+    }
+    return posts;
+  }
+
   // ── Feed streams ─────────────────────────────────────────────────────────
 
   /// Public "For You" feed — all posts, newest first
   static Stream<List<Map<String, dynamic>>> forYouStream() =>
-      _col.orderBy('createdAt', descending: true).limit(60).snapshots().map(
-        (s) => s.docs.map((d) => <String, dynamic>{'id': d.id, ...d.data()}).toList());
+      _col.orderBy('createdAt', descending: true).limit(60).snapshots().asyncMap(
+        (s) => _withFreshAuthors(
+            s.docs.map((d) => <String, dynamic>{'id': d.id, ...d.data()}).toList()));
 
   /// Following feed — posts from users you follow
   static Stream<List<Map<String, dynamic>>> followingStream() async* {
@@ -29,7 +68,8 @@ class ThreadsService {
         .orderBy('createdAt', descending: true)
         .limit(40)
         .snapshots()
-        .map((s) => s.docs.map((d) => <String, dynamic>{'id': d.id, ...d.data()}).toList());
+        .asyncMap((s) => _withFreshAuthors(
+            s.docs.map((d) => <String, dynamic>{'id': d.id, ...d.data()}).toList()));
   }
 
   // ── Follow system ─────────────────────────────────────────────────────────

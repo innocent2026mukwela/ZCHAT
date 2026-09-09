@@ -140,6 +140,31 @@ class _PaperListScreenState extends State<PaperListScreen> {
   Future<void> _openPdf(Map<String, dynamic> paper) async {
     final url = paper['fileUrl'] as String?;
     if (url == null) return;
+
+    // Data Saver mode: confirm before pulling the file over a metered connection.
+    if (_bandwidth == 'Data Saver') {
+      final size = paper['fileSize'] as String? ?? '';
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (dctx) => AlertDialog(
+          backgroundColor: const Color(0xFF0A1A4A),
+          title: const Text('Data Saver is on', style: TextStyle(color: Colors.white, fontSize: 16)),
+          content: Text(
+            'Downloading this paper${size.isNotEmpty ? ' ($size)' : ''} will use mobile data. Continue?',
+            style: TextStyle(color: Colors.white.withAlpha(180)),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () => Navigator.pop(dctx, true),
+              child: const Text('Download', style: TextStyle(color: Color(0xFF4F8AFF))),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true) return;
+    }
+
     await PapersService.recordDownload(paper['id'] as String);
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
@@ -278,7 +303,7 @@ class _PaperCard extends StatelessWidget {
           Row(children: [
             _MiniAction(label: 'Open',      icon: Icons.visibility_outlined,      color: const Color(0xFF4F8AFF),  onTap: onDownload),
             const SizedBox(width: 8),
-            _MiniAction(label: 'Exam Mode', icon: Icons.psychology_alt_outlined,  color: const Color(0xFFB794F4),  onTap: onExamMode),
+            _MiniAction(label: 'AI Practice', icon: Icons.psychology_alt_outlined,  color: const Color(0xFFB794F4),  onTap: onExamMode),
           ]),
         ])),
       ]),

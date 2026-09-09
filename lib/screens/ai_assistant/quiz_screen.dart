@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/ai_service.dart';
+import '../../services/courses_service.dart';
 import '../../utils/glass.dart';
 
 class QuizScreen extends StatefulWidget {
@@ -29,7 +30,8 @@ class _QuizScreenState extends State<QuizScreen> {
   Future<void> _load() async {
     setState(() { _questions = null; _error = null; _cur = 0; _score = 0; _selected = null; _answered = false; _done = false; });
     try {
-      final data = await AiService.generateExamQuestions(courseCode: widget.courseId);
+      final data = await AiService.generateExamQuestions(
+          courseCode: await CoursesService.descriptiveLabel(widget.courseId));
       if (!mounted) { return; }
       final questions = data.map((m) {
         final opts = (m['options'] as List?)?.cast<String>() ?? [];
@@ -93,7 +95,7 @@ class _QuizScreenState extends State<QuizScreen> {
                     child: Row(children: [
                       IconButton(icon: const Icon(Icons.arrow_back_rounded, color: Colors.white), onPressed: () => context.canPop() ? context.pop() : context.go('/ai')),
                       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('Quiz – ${widget.courseId}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                        Text('Quiz – ${widget.courseId}', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                         if (_questions != null && !_done)
                           Text('Question ${_cur + 1} of ${_questions!.length}', style: const TextStyle(color: Colors.white54, fontSize: 11)),
                       ])),

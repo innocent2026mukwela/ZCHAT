@@ -14,6 +14,7 @@ import 'package:pinput/pinput.dart';
 import '../../services/auto_download_service.dart';
 import '../../services/fcm_service.dart';
 import '../../services/two_step_service.dart';
+import '../../services/planner_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
@@ -120,7 +121,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String get _phone    => _profile['phoneNumber'] as String? ?? _user?.phoneNumber ?? '';
   String get _photoUrl => _profile['photoUrl']    as String? ?? _user?.photoURL   ?? '';
   String get _role     => _profile['role']        as String? ?? 'student';
-  String get _studentId => _profile['studentId'] as String? ?? '';
+  // Registration saves `studentNumber`; older profiles used `studentId`.
+  // Prefer the registration key, fall back to the legacy one.
+  String get _studentId =>
+      _profile['studentNumber'] as String? ??
+      _profile['studentId']     as String? ?? '';
   String get _program  => _profile['program']     as String? ?? '';
   String get _school   => _profile['school']      as String? ?? '';
   String get _about    => _profile['about']       as String? ?? '';
@@ -194,7 +199,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     initial: _studentId,
     label: 'Student ID',
     icon: Icons.badge_outlined,
-    onSave: (v) => _save({'studentId': v}),
+    // Write both keys so registration (studentNumber) and profile stay in sync.
+    onSave: (v) => _save({'studentNumber': v, 'studentId': v}),
   );
 
   void _editProgram() => _showTextSheet(
@@ -448,7 +454,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showQr() {
-    final qrData = _phone.isNotEmpty ? _phone : _user?.uid ?? 'zchat';
+    // Encode the exact format the in-app scanner (new_chat_screen) expects:
+    // `zchat://user/{uid}`. Previously this encoded the raw phone/uid, which the
+    // scanner rejected, so a profile QR could never be scanned.
+    final qrData = 'zchat://user/${_user?.uid ?? ''}';
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF0A1A4A),
@@ -660,6 +669,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             onChanged: (v) async {
                               setState(() => _notifReminders = v);
                               await _save({'notifReminders': v});
+                              // Turning off cancels pending local reminders immediately;
+                              // new/edited plans respect the flag when scheduling.
+                              if (!v) await PlannerService.cancelAllReminders();
                             },
                           ),
                         ]).animate(delay: 120.ms).fadeIn(),
@@ -674,7 +686,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               context: context,
                               applicationName: 'ZCHAT',
                               applicationVersion: 'v1.0.0',
-                              applicationLegalese: '© 2025 University of Zambia\nBuilt by Innocent Tembo',
+                              applicationLegalese: '© 2026 University of Zambia\nBuilt by Innocent Tembo',
                             );
                           }),
                         ]).animate(delay: 140.ms).fadeIn(),

@@ -73,8 +73,13 @@ class ChatService {
     List<String> memberUids, {
     String photoUrl = '',
   }) async {
+    // Respect each invitee's "Groups" privacy setting (drop anyone set to 'Nobody').
+    final allowed = <String>[];
+    for (final uid in memberUids) {
+      if (await canAddToGroup(uid)) allowed.add(uid);
+    }
     final ref = _db.collection('chats').doc();
-    final allMembers = [...memberUids, _myUid];
+    final allMembers = [...allowed, _myUid];
     await ref.set({
       'id': ref.id,
       'type': 'group',
@@ -110,6 +115,7 @@ class ChatService {
     String? audioUrl,
     String? voiceDuration,
     bool viewOnce = false,
+    List<String>? mentions,
   }) async {
     final msgRef  = _db.collection('chats').doc(chatId).collection('messages').doc();
     final chatRef = _db.collection('chats').doc(chatId);
@@ -132,6 +138,7 @@ class ChatService {
       'voiceDuration': voiceDuration,
       'reactions':     {},
       'readBy':        [_myUid],
+      'mentions':      mentions ?? [],
       'createdAt':     FieldValue.serverTimestamp(),
       'replyToId':         replyToId,
       'replyToText':       replyToText,
@@ -149,12 +156,18 @@ class ChatService {
       for (final uid in members) {
         if (uid != _myUid) unreadUpdate['unreadCount.$uid'] = FieldValue.increment(1);
       }
+      // Flag mentioned members so the chat list can show an @ badge.
+      final mentionUpdate = <String, dynamic>{};
+      for (final uid in (mentions ?? const [])) {
+        if (uid != _myUid && members.contains(uid)) mentionUpdate['mentioned.$uid'] = true;
+      }
       final preview = type == 'image' ? '📷 Photo' : text;
       batch.update(chatRef, {
         'lastMessage':   preview,
         'lastSenderUid': _myUid,
         'lastTime':      FieldValue.serverTimestamp(),
         ...unreadUpdate,
+        ...mentionUpdate,
       });
     }
 
@@ -171,6 +184,130 @@ class ChatService {
             data: {'type': 'new_message', 'chatId': chatId},
           ).catchError((_) {});
         }
+      }
+    }
+  }
+
+  // ── Polls ──────────────────────────────────────────────────────────────────
+
+  static Future<void> sendPoll(String chatId, String question, List<String> options,
+      {bool multi = false}) async {
+    final msgRef  = _db.collection('chats').doc(chatId).collection('messages').doc();
+    final chatRef = _db.collection('chats').doc(chatId);
+    final senderName = await _myName();
+    final batch = _db.batch();
+    batch.set(msgRef, {
+      'id': msgRef.id, 'chatId': chatId, 'senderUid': _myUid, 'senderName': senderName,
+      'text': '', 'type': 'poll',
+      'poll': {
+        'question': question,
+        'multi':    multi,
+        'options':  options.map((o) => {'text': o, 'voters': <String>[]}).toList(),
+      },
+      'reactions': {}, 'readBy': [_myUid], 'createdAt': FieldValue.serverTimestamp(),
+      'deleted': false, 'edited': false,
+    });
+    await _finishSpecialMessage(batch, chatRef, '📊 $question', senderName, chatId,
+        {'type': 'new_message', 'chatId': chatId});
+  }
+
+  static Future<void> votePoll(String chatId, String msgId, int optionIndex) async {
+    final ref  = _db.collection('chats').doc(chatId).collection('messages').doc(msgId);
+    final snap = await ref.get();
+    final poll = Map<String, dynamic>.from(snap.data()?['poll'] as Map? ?? {});
+    if (poll.isEmpty) return;
+    final multi   = poll['multi'] == true;
+    final options = List<Map<String, dynamic>>.from(
+        (poll['options'] as List? ?? []).map((o) => Map<String, dynamic>.from(o as Map)));
+    for (var i = 0; i < options.length; i++) {
+      final voters = List<String>.from(options[i]['voters'] as List? ?? []);
+      if (i == optionIndex) {
+        voters.contains(_myUid) ? voters.remove(_myUid) : voters.add(_myUid);
+      } else if (!multi) {
+        voters.remove(_myUid); // single-choice: leaving other options
+      }
+      options[i]['voters'] = voters;
+    }
+    poll['options'] = options;
+    await ref.update({'poll': poll});
+  }
+
+  // ── Location ───────────────────────────────────────────────────────────────
+
+  static Future<void> sendLocation(String chatId, double lat, double lng) async {
+    final msgRef  = _db.collection('chats').doc(chatId).collection('messages').doc();
+    final chatRef = _db.collection('chats').doc(chatId);
+    final senderName = await _myName();
+    final batch = _db.batch();
+    batch.set(msgRef, {
+      'id': msgRef.id, 'chatId': chatId, 'senderUid': _myUid, 'senderName': senderName,
+      'text': '', 'type': 'location',
+      'location': {'lat': lat, 'lng': lng},
+      'reactions': {}, 'readBy': [_myUid], 'createdAt': FieldValue.serverTimestamp(),
+      'deleted': false, 'edited': false,
+    });
+    await _finishSpecialMessage(batch, chatRef, '📍 Location', senderName, chatId,
+        {'type': 'new_message', 'chatId': chatId});
+  }
+
+  // ── Events ─────────────────────────────────────────────────────────────────
+
+  static Future<void> sendEvent(String chatId, {
+    required String title,
+    required DateTime dateTime,
+    String location = '',
+    String description = '',
+    String? callRoomId,
+  }) async {
+    final msgRef  = _db.collection('chats').doc(chatId).collection('messages').doc();
+    final chatRef = _db.collection('chats').doc(chatId);
+    final senderName = await _myName();
+    final batch = _db.batch();
+    batch.set(msgRef, {
+      'id': msgRef.id, 'chatId': chatId, 'senderUid': _myUid, 'senderName': senderName,
+      'text': '', 'type': 'event',
+      'event': {
+        'title':       title,
+        'dateTime':    Timestamp.fromDate(dateTime),
+        'location':    location,
+        'description': description,
+        'callRoomId':  callRoomId,
+        'rsvp':        {_myUid: 'going'}, // creator is going by default
+      },
+      'reactions': {}, 'readBy': [_myUid], 'createdAt': FieldValue.serverTimestamp(),
+      'deleted': false, 'edited': false,
+    });
+    await _finishSpecialMessage(batch, chatRef, '📅 $title', senderName, chatId,
+        {'type': 'new_message', 'chatId': chatId});
+  }
+
+  static Future<void> rsvpEvent(String chatId, String msgId, String response) async {
+    // response: 'going' | 'maybe' | 'no'
+    await _db.collection('chats').doc(chatId).collection('messages').doc(msgId)
+        .update({'event.rsvp.$_myUid': response});
+  }
+
+  // Shared tail for structured messages: bump chat preview + unread, then notify.
+  static Future<void> _finishSpecialMessage(WriteBatch batch, DocumentReference chatRef,
+      String preview, String senderName, String chatId, Map<String, String> notifData) async {
+    final chatSnap = await chatRef.get();
+    List<String> members = [];
+    if (chatSnap.exists) {
+      members = List<String>.from((chatSnap.data() as Map)['members'] as List? ?? []);
+      final unreadUpdate = <String, dynamic>{};
+      for (final uid in members) {
+        if (uid != _myUid) unreadUpdate['unreadCount.$uid'] = FieldValue.increment(1);
+      }
+      batch.update(chatRef, {
+        'lastMessage': preview, 'lastSenderUid': _myUid,
+        'lastTime': FieldValue.serverTimestamp(), ...unreadUpdate,
+      });
+    }
+    await batch.commit();
+    for (final uid in members) {
+      if (uid != _myUid) {
+        AiService.sendNotification(recipientUid: uid, title: senderName, body: preview, data: notifData)
+            .catchError((_) {});
       }
     }
   }
@@ -240,7 +377,7 @@ class ChatService {
 
   static Future<void> markRead(String chatId) async {
     await _db.collection('chats').doc(chatId)
-        .update({'unreadCount.$_myUid': 0});
+        .update({'unreadCount.$_myUid': 0, 'mentioned.$_myUid': false});
 
     // Check if this user has read receipts enabled
     try {
@@ -301,6 +438,27 @@ class ChatService {
   static Future<void> deleteChat(String chatId) async {
     await _db.collection('chats').doc(chatId)
         .update({'members': FieldValue.arrayRemove([_myUid])});
+  }
+
+  /// Permanently deletes messages older than [ttl] from a chat (disappearing
+  /// messages). Removing the doc clears it for every member, which is the
+  /// expected behaviour. Batched + capped so a huge backlog can't stall the UI;
+  /// call it again (e.g. on next open) to continue clearing.
+  static Future<void> purgeExpiredMessages(String chatId, Duration ttl) async {
+    final cutoff = Timestamp.fromDate(DateTime.now().subtract(ttl));
+    try {
+      final snap = await _db
+          .collection('chats').doc(chatId).collection('messages')
+          .where('createdAt', isLessThan: cutoff)
+          .limit(300)
+          .get();
+      if (snap.docs.isEmpty) return;
+      final batch = _db.batch();
+      for (final d in snap.docs) {
+        batch.delete(d.reference);
+      }
+      await batch.commit();
+    } catch (_) {}
   }
 
   // ── Edit message ─────────────────────────────────────────────────────────
@@ -374,7 +532,21 @@ class ChatService {
 
   // ── Add/remove group members ──────────────────────────────────────────────
 
+  /// Whether [uid] allows being added to groups (Profile → Privacy → Groups).
+  /// Only an explicit 'Nobody' blocks; 'My contacts'/'Everyone'/unset allow.
+  static Future<bool> canAddToGroup(String uid) async {
+    try {
+      final doc = await _db.collection('users').doc(uid).get();
+      return (doc.data()?['privacyGroups'] as String?) != 'Nobody';
+    } catch (_) {
+      return true;
+    }
+  }
+
   static Future<void> addGroupMember(String chatId, String uid, String name) async {
+    if (!await canAddToGroup(uid)) {
+      throw Exception('$name does not allow being added to groups.');
+    }
     await _db.collection('chats').doc(chatId).update({
       'members':    FieldValue.arrayUnion([uid]),
       'memberUids': FieldValue.arrayUnion([uid]),
@@ -411,8 +583,76 @@ class ChatService {
     await _db.collection('chats').doc(chatId).update({'description': description});
   }
 
+  /// Who can send in a group: 'all' (default) or 'admins' (announcement mode).
+  static Future<void> setGroupSendPolicy(String chatId, bool adminsOnly) async {
+    await _db.collection('chats').doc(chatId).update({'sendPolicy': adminsOnly ? 'admins' : 'all'});
+  }
+
+  static bool isGroupAdmin(Map<String, dynamic> chat, String uid) =>
+      List<String>.from(chat['adminUids'] as List? ?? []).contains(uid);
+
+  /// True when the group is admins-only AND the current user is not an admin.
+  static bool isSendBlocked(Map<String, dynamic> chat) {
+    if (chat['type'] != 'group') return false;
+    if ((chat['sendPolicy'] as String?) != 'admins') return false;
+    return !isGroupAdmin(chat, _myUid);
+  }
+
   static Future<void> setGroupInviteToken(String chatId, String token) async {
     await _db.collection('chats').doc(chatId).update({'inviteToken': token});
+  }
+
+  static Future<void> setRequireApproval(String chatId, bool require) async {
+    await _db.collection('chats').doc(chatId).update({'requireApproval': require});
+  }
+
+  /// Join a group from an invite link. Returns 'joined', 'requested', or 'member'.
+  static Future<String> joinViaInvite(String chatId, String token) async {
+    final ref  = _db.collection('chats').doc(chatId);
+    final doc  = await ref.get();
+    if (!doc.exists) throw Exception('That group no longer exists.');
+    final data = doc.data()!;
+    if ((data['inviteToken'] as String?) != token || token.isEmpty) {
+      throw Exception('This invite link is invalid or has been reset.');
+    }
+    final members = List<String>.from(data['members'] as List? ?? []);
+    if (members.contains(_myUid)) return 'member';
+
+    final myName = await _myName();
+    if ((data['requireApproval'] as bool?) == true) {
+      await ref.collection('joinRequests').doc(_myUid).set({
+        'uid': _myUid, 'name': myName, 'requestedAt': FieldValue.serverTimestamp(),
+      });
+      return 'requested';
+    }
+    await ref.update({
+      'members':          FieldValue.arrayUnion([_myUid]),
+      'memberUids':       FieldValue.arrayUnion([_myUid]),
+      'memberNames.$_myUid': myName,
+      'unreadCount.$_myUid': 0,
+      'archived.$_myUid':    false,
+    });
+    return 'joined';
+  }
+
+  static Stream<List<Map<String, dynamic>>> joinRequestsStream(String chatId) =>
+      _db.collection('chats').doc(chatId).collection('joinRequests').snapshots()
+          .map((s) => s.docs.map((d) => {...d.data(), 'uid': d.id}).toList());
+
+  static Future<void> approveJoinRequest(String chatId, String uid, String name) async {
+    final ref = _db.collection('chats').doc(chatId);
+    await ref.update({
+      'members':          FieldValue.arrayUnion([uid]),
+      'memberUids':       FieldValue.arrayUnion([uid]),
+      'memberNames.$uid': name,
+      'unreadCount.$uid': 0,
+      'archived.$uid':    false,
+    });
+    await ref.collection('joinRequests').doc(uid).delete();
+  }
+
+  static Future<void> rejectJoinRequest(String chatId, String uid) async {
+    await _db.collection('chats').doc(chatId).collection('joinRequests').doc(uid).delete();
   }
 
   // ── Streams ──────────────────────────────────────────────────────────────
@@ -470,14 +710,23 @@ class ChatService {
         });
   }
 
-  static Stream<List<Map<String, dynamic>>> messagesStream(String chatId) {
+  /// Streams the most recent [limit] messages (newest fetched, returned oldest→
+  /// newest for display). Raise [limit] to page in older history. Loading the
+  /// whole history on every chat open is slow and costly on long chats.
+  static Stream<List<Map<String, dynamic>>> messagesStream(String chatId, {int limit = 50}) {
     return _db
         .collection('chats').doc(chatId)
         .collection('messages')
-        .orderBy('createdAt')
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
         .snapshots()
         .asyncMap((snap) async {
-          final docs = snap.docs.map((d) => Map<String, dynamic>.from(d.data())).toList();
+          // Fetched newest-first for the limit; reverse to chronological order.
+          final docs = snap.docs
+              .map((d) => Map<String, dynamic>.from(d.data()))
+              .toList()
+              .reversed
+              .toList();
           for (final doc in docs) {
             final raw = doc['text'] as String? ?? '';
             if (raw.isNotEmpty) doc['text'] = await EncryptionService.decrypt(chatId, raw);
@@ -508,6 +757,12 @@ class ChatService {
 
   static bool isPinned(Map<String, dynamic> chat) =>
       (chat['pinned'] as bool?) == true;
+
+  /// Whether the current user was @mentioned in an unread message of this chat.
+  static bool isMentioned(Map<String, dynamic> chat) {
+    final m = Map<String, dynamic>.from(chat['mentioned'] as Map? ?? {});
+    return (m[_myUid] as bool?) == true;
+  }
 
   static Future<List<Map<String, dynamic>>> searchUsers(String query) async {
     if (query.trim().isEmpty) return [];

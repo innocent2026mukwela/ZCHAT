@@ -5,8 +5,10 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ai_service.dart';
 import '../../utils/glass.dart';
+import '../../widgets/ai_markdown.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/voice_input_button.dart';
 
@@ -15,7 +17,12 @@ class AiChatScreen extends StatefulWidget {
   /// When null, a new conversation is started on the first message.
   final String? conversationId;
 
-  const AiChatScreen({super.key, this.conversationId});
+  /// When true, this is the persistent "ZChat AI" assistant opened from the
+  /// top of the Chats list: it restores the user's primary conversation on
+  /// open and remembers it across sessions.
+  final bool pinned;
+
+  const AiChatScreen({super.key, this.conversationId, this.pinned = false});
   @override
   State<AiChatScreen> createState() => _AiChatScreenState();
 }
@@ -75,25 +82,76 @@ class _AiChatScreenState extends State<AiChatScreen> {
     _history.add({'role': 'user', 'content': trimmed});
     _scrollDown();
 
+    final buffer = StringBuffer();
+    int? aiIdx; // index of the streaming AI message, created on the first token
     try {
-      final result = await AiService.chat(
+      await for (final evt in AiService.chatStream(
         messages: List.from(_history),
         courseId: _course?.replaceAll(' ', ''),
         conversationId: _conversationId,
-      );
-      if (!mounted) return;
-      final reply = result['reply'] as String;
-      _conversationId = result['conversationId'] as String?;
-      _history.add({'role': 'assistant', 'content': reply});
-      setState(() { _loading = false; _messages.add(_Msg(text: reply, isAi: true)); });
+      )) {
+        if (!mounted) return;
+        final delta = evt['delta'] as String?;
+        if (delta != null) {
+          buffer.write(delta);
+          setState(() {
+            if (aiIdx == null) {
+              _loading = false; // first token → replace the typing dots with text
+              _messages.add(_Msg(text: buffer.toString(), isAi: true));
+              aiIdx = _messages.length - 1;
+            } else {
+              _messages[aiIdx!] = _Msg(text: buffer.toString(), isAi: true);
+            }
+          });
+          _scrollDown();
+        } else if (evt['done'] == true) {
+          _conversationId = evt['conversationId'] as String? ?? _conversationId;
+          // Remember this as the primary conversation for the pinned assistant.
+          if (widget.pinned && _conversationId != null) _savePrimaryId(_conversationId!);
+        } else if (evt['error'] != null) {
+          setState(() {
+            _loading = false;
+            final m = _Msg(text: '⚠️ ${evt['error']}', isAi: true);
+            if (aiIdx == null) { _messages.add(m); aiIdx = _messages.length - 1; }
+            else { _messages[aiIdx!] = m; }
+          });
+        }
+      }
+      final reply = buffer.toString().trim();
+      if (reply.isNotEmpty) {
+        _history.add({'role': 'assistant', 'content': reply});
+      } else if (aiIdx == null && mounted) {
+        setState(() => _messages.add(_Msg(text: '⚠️ No response received.', isAi: true)));
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _loading = false;
-        _messages.add(_Msg(text: '⚠️ ${e.toString().replaceFirst('Exception: ', '')}', isAi: true));
+        final m = _Msg(text: '⚠️ ${e.toString().replaceFirst('Exception: ', '')}', isAi: true);
+        if (aiIdx == null) { _messages.add(m); } else { _messages[aiIdx!] = m; }
       });
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
     _scrollDown();
+  }
+
+  // Primary-assistant conversation id is remembered per user so the pinned
+  // "ZChat AI" chat continues where you left off across sessions.
+  String get _primaryKey => 'ai_primary_convo_${FirebaseAuth.instance.currentUser?.uid ?? 'anon'}';
+
+  Future<void> _savePrimaryId(String id) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_primaryKey, id);
+    } catch (_) {}
+  }
+
+  Future<void> _restorePrimaryConversation() async {
+    try {
+      final p  = await SharedPreferences.getInstance();
+      final id = p.getString(_primaryKey);
+      if (id != null && id.isNotEmpty && mounted) _loadConversation(id);
+    } catch (_) {}
   }
 
   @override
@@ -101,7 +159,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
     super.initState();
     _initTts();
     _loadCourses();
-    if (widget.conversationId != null) _loadConversation(widget.conversationId!);
+    if (widget.conversationId != null) {
+      _loadConversation(widget.conversationId!);
+    } else if (widget.pinned) {
+      _restorePrimaryConversation();
+    }
   }
 
   Future<void> _loadConversation(String id) async {
@@ -417,7 +479,9 @@ class _Bubble extends StatelessWidget {
             ]),
             const SizedBox(height: 6),
           ],
-          Text(msg.text, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.5)),
+          msg.isAi
+              ? AiMarkdown(msg.text)
+              : Text(msg.text, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.5)),
         ]),
       ),
     ).animate(delay: (index * 20).ms).fadeIn().slideY(begin: 0.08, end: 0);

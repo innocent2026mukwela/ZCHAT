@@ -6,6 +6,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../services/planner_service.dart';
+import '../../services/courses_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
@@ -679,6 +680,13 @@ class _TimetableFormState extends State<_TimetableForm> {
 
   late List<String> _types;
 
+  // Students pick a course from their catalog enrolments (no free-text); the
+  // slot stores both the title (subject) and the stable course code.
+  bool get _isStudent => widget.role != 'lecturer';
+  List<Map<String, dynamic>> _enrolled = [];
+  String? _courseCode;
+  bool _loadingCourses = true;
+
   @override
   void initState() {
     super.initState();
@@ -694,7 +702,39 @@ class _TimetableFormState extends State<_TimetableForm> {
       _endTime          = e['endTime']   as String? ?? '10:00';
       _type             = e['type']      as String? ?? _types[0];
       _reminder         = e['reminder']  as bool? ?? true;
+      _courseCode       = (e['courseCode'] as String?)?.trim();
     }
+    if (_isStudent) {
+      _loadEnrolled();
+    } else {
+      _loadingCourses = false;
+    }
+  }
+
+  Future<void> _loadEnrolled() async {
+    try {
+      final list = await CoursesService.enrolledStream().first;
+      if (!mounted) return;
+      // Preselect from the existing courseCode, or match the existing subject.
+      var code = _courseCode;
+      if ((code == null || code.isEmpty) && widget.existing != null) {
+        final subj = (widget.existing!['subject'] as String? ?? '').toLowerCase();
+        for (final c in list) {
+          if ((c['title'] as String? ?? '').toLowerCase() == subj) { code = c['code'] as String?; break; }
+        }
+      }
+      setState(() { _enrolled = list; _courseCode = code; _loadingCourses = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loadingCourses = false);
+    }
+  }
+
+  String? get _selectedTitle {
+    if (_courseCode == null) return null;
+    for (final c in _enrolled) {
+      if (c['code'] == _courseCode) return c['title'] as String? ?? _courseCode;
+    }
+    return _courseCode;
   }
 
   @override
@@ -712,11 +752,66 @@ class _TimetableFormState extends State<_TimetableForm> {
     });
   }
 
+  void _goBrowse() async {
+    await context.push('/courses/browse');
+    if (mounted) _loadEnrolled();
+  }
+
+  void _showCoursePicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF0E1829),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(margin: const EdgeInsets.symmetric(vertical: 12), width: 40, height: 4,
+              decoration: BoxDecoration(color: Colors.white.withAlpha(40), borderRadius: BorderRadius.circular(2))),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Align(alignment: Alignment.centerLeft,
+                child: Text('Select a course', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700))),
+          ),
+          Flexible(
+            child: ListView(shrinkWrap: true, children: _enrolled.map((c) {
+              final code  = c['code'] as String? ?? '';
+              final title = c['title'] as String? ?? code;
+              final sel   = code == _courseCode;
+              return ListTile(
+                leading: Icon(sel ? Icons.radio_button_checked : Icons.radio_button_off_rounded,
+                    color: sel ? const Color(0xFF4F8AFF) : Colors.white54),
+                title: Text(title, style: const TextStyle(color: Colors.white)),
+                subtitle: Text(code, style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12)),
+                onTap: () { setState(() => _courseCode = code); Navigator.pop(context); },
+              );
+            }).toList()),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
   Future<void> _save() async {
-    if (_subjectCtrl.text.trim().isEmpty) return;
+    String subject;
+    String? courseCode;
+    if (_isStudent) {
+      if (_courseCode == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Pick a course first (enrol from the Course Catalog).'),
+          behavior: SnackBarBehavior.floating,
+        ));
+        return;
+      }
+      subject    = _selectedTitle ?? _courseCode!;
+      courseCode = _courseCode;
+    } else {
+      if (_subjectCtrl.text.trim().isEmpty) return;
+      subject = _subjectCtrl.text.trim();
+    }
     setState(() => _saving = true);
     final data = {
-      'subject':   _subjectCtrl.text.trim(),
+      'subject':   subject,
+      if (courseCode != null) 'courseCode': courseCode,
       'venue':     _venueCtrl.text.trim(),
       'dayIndex':  _dayIndex,
       'startTime': _startTime,
@@ -753,7 +848,17 @@ class _TimetableFormState extends State<_TimetableForm> {
       saving: _saving,
       onSave: _save,
       children: [
-        _GlassInput(controller: _subjectCtrl, hint: widget.role == 'lecturer' ? 'Course / Subject' : 'Subject / Course', icon: Icons.book_outlined),
+        if (_isStudent)
+          _CoursePickerField(
+            loading: _loadingCourses,
+            hasCourses: _enrolled.isNotEmpty,
+            label: _selectedTitle == null
+                ? null
+                : '${_courseCode!} · ${_selectedTitle!}',
+            onTap: _enrolled.isEmpty ? _goBrowse : _showCoursePicker,
+          )
+        else
+          _GlassInput(controller: _subjectCtrl, hint: 'Course / Subject', icon: Icons.book_outlined),
         const SizedBox(height: 10),
         _GlassInput(controller: _venueCtrl, hint: 'Venue / Room (optional)', icon: Icons.location_on_outlined),
         const SizedBox(height: 10),
@@ -1058,6 +1163,48 @@ class _FormSheet extends StatelessWidget {
 }
 
 // ── Shared widgets ────────────────────────────────────────────────────────────
+
+// Tappable field that opens the enrolled-course picker (students).
+class _CoursePickerField extends StatelessWidget {
+  final bool loading;
+  final bool hasCourses;
+  final String? label;
+  final VoidCallback onTap;
+  const _CoursePickerField({
+    required this.loading,
+    required this.hasCourses,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final text = loading
+        ? 'Loading your courses…'
+        : (label ?? (hasCourses ? 'Select a course' : 'Enrol in a course first — tap to browse'));
+    return GestureDetector(
+      onTap: loading ? null : onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.white.withAlpha(18),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withAlpha(35)),
+        ),
+        child: Row(children: [
+          Icon(Icons.book_outlined, color: Colors.white.withAlpha(160), size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: label != null ? Colors.white : Colors.white.withAlpha(120), fontSize: 14)),
+          ),
+          Icon(hasCourses ? Icons.expand_more_rounded : Icons.chevron_right_rounded,
+              color: Colors.white.withAlpha(120)),
+        ]),
+      ),
+    );
+  }
+}
 
 class _GlassInput extends StatelessWidget {
   final TextEditingController controller;

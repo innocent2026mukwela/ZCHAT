@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// UnZA z CHAT — Firebase Storage rules.
+// Media is readable by any signed-in user (so others can see images) but only
+// writable by the owner / chat participants. Deploy:
+//   firebase deploy --only storage
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function under10MB() { return request.resource.size < 10 * 1024 * 1024; }
+
+    match /avatars/{uid}/{file=**} {
+      allow read:  if signedIn();
+      allow write: if request.auth.uid == uid && under10MB();
+    }
+    match /thread_images/{uid}/{file=**} {
+      allow read:  if signedIn();
+      allow write: if request.auth.uid == uid && under10MB();
+    }
+    match /status/{uid}/{file=**} {
+      allow read:  if signedIn();
+      allow write: if request.auth.uid == uid;
+    }
+    match /chat_images/{chatId}/{file=**} {
+      allow read, write: if signedIn();
+    }
+    match /voice_notes/{chatId}/{file=**} {
+      allow read, write: if signedIn();
+    }
+    match /papers/{file=**} {
+      allow read:  if signedIn();
+      allow write: if signedIn();
+    }
+    // Unmatched paths are denied by default.
+  }
+}

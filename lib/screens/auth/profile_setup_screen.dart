@@ -50,9 +50,14 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     if (_role == 'lecturer') {
-      final email = _emailCtrl.text.trim().toLowerCase();
-      if (!email.endsWith('@unza.zm') && !email.endsWith('@unza.ac.zm')) {
-        setState(() => _error = 'Lecturer email must be a UNZA institutional address (@unza.zm or @unza.ac.zm)');
+      final email  = _emailCtrl.text.trim().toLowerCase();
+      final isUnza = _university == 'University of Zambia';
+      if (isUnza && !email.endsWith('@unza.zm') && !email.endsWith('@unza.ac.zm')) {
+        setState(() => _error = 'UNZA lecturer email must be @unza.zm or @unza.ac.zm');
+        return;
+      }
+      if (!isUnza && !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+        setState(() => _error = 'Enter a valid institutional email address');
         return;
       }
     }
@@ -277,13 +282,19 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                         const SizedBox(height: 12),
                         _GlassInput(
                           controller: _emailCtrl,
-                          hintText: 'UNZA email',
+                          hintText: 'Institutional email',
                           icon: Icons.alternate_email_rounded,
                           keyboardType: TextInputType.emailAddress,
                           validator: (v) {
-                            final email = v?.trim().toLowerCase() ?? '';
-                            if (email.isEmpty) return 'UNZA email is required';
-                            if (!email.endsWith('@unza.zm') && !email.endsWith('@unza.ac.zm')) return 'Use your UNZA institutional email (@unza.zm or @unza.ac.zm)';
+                            final email  = v?.trim().toLowerCase() ?? '';
+                            final isUnza = _university == 'University of Zambia';
+                            if (email.isEmpty) return 'Institutional email is required';
+                            if (isUnza && !email.endsWith('@unza.zm') && !email.endsWith('@unza.ac.zm')) {
+                              return 'UNZA email must be @unza.zm or @unza.ac.zm';
+                            }
+                            if (!isUnza && !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+                              return 'Enter a valid institutional email';
+                            }
                             return null;
                           },
                         ).animate(delay: 300.ms).fadeIn().slideY(begin: 0.1, end: 0),

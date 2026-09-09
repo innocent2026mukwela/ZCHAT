@@ -13,8 +13,10 @@ import 'screens/chats/starred_messages_screen.dart';
 import 'screens/status/status_screen.dart';
 import 'screens/calls/calls_screen.dart';
 import 'screens/courses/course_list_screen.dart';
+import 'screens/courses/course_catalog_screen.dart';
+import 'screens/communities/communities_screen.dart';
+import 'screens/communities/community_detail_screen.dart';
 import 'screens/courses/paper_list_screen.dart';
-import 'screens/courses/pdf_viewer_screen.dart';
 import 'screens/courses/exam_simulator_screen.dart';
 import 'screens/classroom/classroom_screen.dart';
 import 'screens/classroom/live_session_screen.dart';
@@ -81,16 +83,12 @@ final appRouter = GoRouter(
 
     // Courses & Papers
     GoRoute(path: '/courses', builder: (c, s) => const CourseListScreen()),
+    GoRoute(path: '/courses/browse', builder: (c, s) => const CourseCatalogScreen()),
+    GoRoute(path: '/communities', builder: (c, s) => const CommunitiesScreen()),
+    GoRoute(path: '/communities/:id', builder: (c, s) => CommunityDetailScreen(communityId: s.pathParameters['id']!)),
     GoRoute(
       path: '/courses/:courseId/papers',
       builder: (c, s) => PaperListScreen(courseId: s.pathParameters['courseId']!),
-    ),
-    GoRoute(
-      path: '/pdf-viewer',
-      builder: (c, s) => PdfViewerScreen(
-        url:   s.uri.queryParameters['url'] ?? '',
-        title: s.uri.queryParameters['title'] ?? 'Document',
-      ),
     ),
     GoRoute(
       path: '/exam-simulator/:courseId',
@@ -119,6 +117,7 @@ final appRouter = GoRouter(
     // AI
     GoRoute(path: '/ai',                       builder: (c, s) => const AiHomeScreen()),
     GoRoute(path: '/ai/chat',                   builder: (c, s) => AiChatScreen(conversationId: s.extra as String?)),
+    GoRoute(path: '/ai/assistant',              builder: (c, s) => const AiChatScreen(pinned: true)),
     GoRoute(path: '/ai/quiz/:courseId',         builder: (c, s) => QuizScreen(courseId: s.pathParameters['courseId']!)),
     GoRoute(path: '/ai/summaries/:courseId',    builder: (c, s) => SummaryScreen(courseId: s.pathParameters['courseId']!)),
     GoRoute(path: '/ai/group-summarizer',       builder: (c, s) => const GroupSummarizerScreen()),

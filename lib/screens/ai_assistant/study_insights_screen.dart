@@ -112,7 +112,7 @@ class _StudyInsightsScreenState extends State<StudyInsightsScreen> {
               ),
               const Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Study Insights', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+                  Text('Study Insights', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                   Text('Personalised recommendations', style: TextStyle(color: Colors.white54, fontSize: 11)),
                 ]),
               ),
