@@ -114,5 +114,12 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Allow cleartext HTTP so the app can reach the dev backend on the LAN
+	     (e.g. http://172.20.10.14:5000). Switch to HTTPS + remove this for release. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
