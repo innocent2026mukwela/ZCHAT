@@ -3,12 +3,36 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'ai_service.dart';
 
 class ThreadsService {
   static final _db      = FirebaseFirestore.instance;
   static final _storage = FirebaseStorage.instance;
   static final _col = _db.collection('threads');
   static User get _me => FirebaseAuth.instance.currentUser!;
+
+  // ── Notifications ───────────────────────────────────────────────────────────
+  static Future<String> _myName() async {
+    try {
+      final d = await _db.collection('users').doc(_me.uid).get();
+      final n = (d.data()?['fullName'] as String?)?.trim();
+      return (n != null && n.isNotEmpty) ? n : (_me.displayName ?? 'Someone');
+    } catch (_) { return _me.displayName ?? 'Someone'; }
+  }
+
+  /// Fire-and-forget push to a post's author (never notifies yourself).
+  static Future<void> _notifyAuthor(String postId, {required String body, required String type}) async {
+    try {
+      final snap = await _col.doc(postId).get();
+      final authorUid = snap.data()?['authorUid'] as String?;
+      if (authorUid == null || authorUid.isEmpty || authorUid == _me.uid) return;
+      final myName = await _myName();
+      AiService.sendNotification(
+        recipientUid: authorUid, title: myName, body: body,
+        data: {'type': type, 'postId': postId},
+      ).catchError((_) {});
+    } catch (_) {}
+  }
 
   // ── Author freshness cache ─────────────────────────────────────────────────
   // Posts denormalize authorName/authorPhotoUrl at post time, so a profile edit
@@ -92,6 +116,12 @@ class ThreadsService {
       {'name': myName, 'followedAt': FieldValue.serverTimestamp()},
     );
     await batch.commit();
+    if (targetUid != me.uid) {
+      AiService.sendNotification(
+        recipientUid: targetUid, title: myName, body: 'started following you',
+        data: {'type': 'feed_follow', 'uid': me.uid},
+      ).catchError((_) {});
+    }
   }
 
   static Future<void> unfollowUser(String targetUid) async {
@@ -178,6 +208,7 @@ class ThreadsService {
       'likedBy': isLiked ? FieldValue.arrayRemove([uid]) : FieldValue.arrayUnion([uid]),
       'likes':   FieldValue.increment(isLiked ? -1 : 1),
     });
+    if (!isLiked) _notifyAuthor(postId, body: 'liked your post', type: 'feed_like');
   }
 
   static Future<void> toggleRepost(String postId, bool isReposted) async {
@@ -186,6 +217,7 @@ class ThreadsService {
       'repostedBy': isReposted ? FieldValue.arrayRemove([uid]) : FieldValue.arrayUnion([uid]),
       'reposts':    FieldValue.increment(isReposted ? -1 : 1),
     });
+    if (!isReposted) _notifyAuthor(postId, body: 'reposted your post', type: 'feed_repost');
   }
 
   // ── Replies ───────────────────────────────────────────────────────────────
@@ -219,6 +251,8 @@ class ThreadsService {
       'createdAt':      FieldValue.serverTimestamp(),
     });
     await batch.commit();
+    final preview = text.length > 60 ? '${text.substring(0, 60)}…' : text;
+    _notifyAuthor(postId, body: 'replied: $preview', type: 'feed_reply');
   }
 
   static Future<void> toggleReplyLike(String postId, String replyId, bool isLiked) async {
