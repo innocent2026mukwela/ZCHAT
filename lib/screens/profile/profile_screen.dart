@@ -514,8 +514,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
-              await FcmService.clearToken();
-              await _auth.signOut();
+              // Clearing the FCM token is best-effort — it must never block
+              // sign-out (it can hang on iOS without a push entitlement).
+              try {
+                await FcmService.clearToken();
+              } catch (_) {}
+              // The critical action: actually sign out of Firebase.
+              try {
+                await _auth.signOut();
+              } catch (_) {}
               if (mounted) context.go('/login');
             },
             child: const Text('Sign out',

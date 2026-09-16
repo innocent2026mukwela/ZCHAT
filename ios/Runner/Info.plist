@@ -27,6 +27,10 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>ZCHAT may use your location to share it in chats.</string>
 
+	<!-- Local network – reach the dev backend on the LAN/hotspot (iOS 14+ prompts for this) -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>ZCHAT connects to its server on your local network to sign you in and sync your chats.</string>
+
 	<!-- Background audio – voice notes continue when app is backgrounded -->
 	<key>UIBackgroundModes</key>
 	<array>

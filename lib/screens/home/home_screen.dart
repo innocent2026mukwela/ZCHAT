@@ -61,8 +61,6 @@ class _GlassHomeAppBar extends StatelessWidget {
   final VoidCallback? onSearchTap;
   const _GlassHomeAppBar({this.onSearchTap});
 
-  static const _brandAsset = 'assets/icons/zchat_logo_cutout.png';
-
   @override
   Widget build(BuildContext context) {
     return ClipRect(
@@ -82,22 +80,8 @@ class _GlassHomeAppBar extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
                   child: Row(
                     children: [
-                      // ZCHAT brand
-                      Image.asset(
-                        _brandAsset,
-                        width: 108,
-                        fit: BoxFit.contain,
-                        errorBuilder: (context, error, stackTrace) {
-                          return const Text(
-                            'ZCHAT',
-                            style: TextStyle(
-                              color: Color(0xFF2EA3FF),
-                              fontSize: 18,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          );
-                        },
-                      ),
+                      // ZCHAT brand lockup (Z symbol + typographic wordmark)
+                      const ZBrandLockup(symbolSize: 34, fontSize: 22),
                       const Spacer(),
                       // Search only applies to the Chats tab — hide it elsewhere
                       // so it isn't a dead affordance on Status/Calls.
@@ -450,48 +434,61 @@ class _AiAssistantTile extends StatelessWidget {
     return InkWell(
       onTap: () => context.push('/ai/assistant'),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [const Color(0xFF7C3AED).withAlpha(30), Colors.transparent],
+            colors: [const Color(0xFF7C3AED).withAlpha(34), Colors.transparent],
           ),
-          border: Border(bottom: BorderSide(color: Colors.white.withAlpha(14))),
+          border: Border(bottom: BorderSide(color: Colors.white.withAlpha(16))),
         ),
         child: Row(children: [
-          Container(
-            width: 52, height: 52,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft, end: Alignment.bottomRight,
-                colors: [Color(0xFF7C3AED), Color(0xFF4F8AFF)],
+          // Avatar with soft glow + online dot
+          Stack(children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft, end: Alignment.bottomRight,
+                  colors: [Color(0xFF7C3AED), Color(0xFF4F8AFF)],
+                ),
+                boxShadow: [BoxShadow(color: const Color(0xFF7C3AED).withAlpha(120), blurRadius: 14, spreadRadius: 1)],
+              ),
+              child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 25),
+            ),
+            Positioned(
+              right: 0, bottom: 0,
+              child: Container(
+                width: 15, height: 15,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF22C55E),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFF0A1330), width: 2.5),
+                ),
               ),
             ),
-            child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 12),
+          ]),
+          const SizedBox(width: 13),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                const Text('ZChat AI',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFB794F4).withAlpha(40),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Text('AI',
-                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Color(0xFFB794F4))),
+                const Flexible(
+                  child: Text('ZChat AI',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.2)),
                 ),
+                const SizedBox(width: 7),
+                const ZAiTag(fontSize: 8.5),
               ]),
               const SizedBox(height: 3),
-              Text('Your assistant · schedule, summaries & more',
+              Text('Academic assistant · schedule, summaries & more',
                   maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13, color: Colors.white.withAlpha(150))),
+                  style: TextStyle(fontSize: 12.5, color: Colors.white.withAlpha(160), height: 1.2)),
             ]),
           ),
+          const SizedBox(width: 8),
+          Icon(Icons.push_pin_rounded, size: 15, color: Colors.white.withAlpha(70)),
+          const SizedBox(width: 6),
           Icon(Icons.chevron_right_rounded, color: Colors.white.withAlpha(90)),
         ]),
       ),

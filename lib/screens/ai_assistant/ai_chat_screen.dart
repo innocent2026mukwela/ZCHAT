@@ -279,16 +279,34 @@ class _AiChatScreenState extends State<AiChatScreen> {
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
                       Expanded(child: Row(children: [
-                        Image.asset(
-                          'assets/icons/zchat_logo_cutout.png',
-                          height: 26,
-                          fit: BoxFit.contain,
-                          errorBuilder: (ctx, e, s) => const Text('ZCHAT', style: TextStyle(color: Color(0xFF2EA3FF), fontSize: 16, fontWeight: FontWeight.w900)),
+                        Container(
+                          width: 36, height: 36,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: const LinearGradient(
+                              begin: Alignment.topLeft, end: Alignment.bottomRight,
+                              colors: [Color(0xFF7C3AED), Color(0xFF4F8AFF)]),
+                            boxShadow: [BoxShadow(color: const Color(0xFF7C3AED).withAlpha(90), blurRadius: 10)],
+                          ),
+                          child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 18),
                         ),
-                        const SizedBox(width: 6),
-                        const Text('ZChat AI', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+                        const SizedBox(width: 10),
+                        Expanded(child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('ZChat AI',
+                              maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: 0.2)),
+                            Row(children: [
+                              Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF22C55E), shape: BoxShape.circle)),
+                              const SizedBox(width: 5),
+                              Text('Online', style: TextStyle(color: Colors.white.withAlpha(150), fontSize: 11, fontWeight: FontWeight.w500)),
+                            ]),
+                          ],
+                        )),
                       ])),
                       GestureDetector(
                         onTap: () => _showCourseSelector(context),

@@ -237,6 +237,167 @@ class GlowOrbs extends StatelessWidget {
   }
 }
 
+// ── Brand identity ────────────────────────────────────────────────────
+// Single source of truth for how the ZCHAT brand is presented. Use these in
+// every branded header so the logo + wordmark stay consistent app-wide.
+
+const String kBrandAsset = 'assets/icons/zchat_logo_transparent.png';
+
+/// The circular "Z" brand symbol, cropped from the master logo lockup so it can
+/// sit beside a typographic wordmark at any size. Falls back to a drawn glyph.
+class ZSymbol extends StatelessWidget {
+  final double size;
+  const ZSymbol({super.key, this.size = 30});
+
+  @override
+  Widget build(BuildContext context) {
+    // The master asset is a wide lockup (symbol + old wordmark). cover +
+    // left-alignment crops to just the circular symbol on the left.
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Image.asset(
+        kBrandAsset,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        alignment: Alignment.centerLeft,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (ctx, err, st) => _FallbackZ(size: size),
+      ),
+    );
+  }
+}
+
+class _FallbackZ extends StatelessWidget {
+  final double size;
+  const _FallbackZ({required this.size});
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      border: Border.all(color: const Color(0xFF2EA3FF), width: size * 0.075),
+    ),
+    alignment: Alignment.center,
+    child: Text('Z',
+      style: TextStyle(
+        color: const Color(0xFF2EA3FF),
+        fontWeight: FontWeight.w900,
+        fontSize: size * 0.56,
+        height: 1.0,
+      )),
+  );
+}
+
+/// Typographic ZCHAT wordmark with a subtle gradient sheen. Pass a solid
+/// [color] to opt out of the gradient (e.g. on light surfaces).
+class ZWordmark extends StatelessWidget {
+  final double fontSize;
+  final Color? color;
+  const ZWordmark({super.key, this.fontSize = 20, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(
+      'ZCHAT',
+      style: TextStyle(
+        fontSize: fontSize,
+        fontWeight: FontWeight.w800,
+        letterSpacing: fontSize * 0.13,
+        height: 1.0,
+        color: color ?? Colors.white,
+      ),
+    );
+    if (color != null) return text;
+    return ShaderMask(
+      shaderCallback: (b) => const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFF2F7FF), Color(0xFF7FB4FF)],
+      ).createShader(b),
+      child: text,
+    );
+  }
+}
+
+/// A compact "AI" tag used to mark ZChat AI surfaces consistently.
+class ZAiTag extends StatelessWidget {
+  final double fontSize;
+  const ZAiTag({super.key, this.fontSize = 10});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: EdgeInsets.symmetric(horizontal: fontSize * 0.62, vertical: fontSize * 0.22),
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(colors: [Color(0xFF7C3AED), Color(0xFF4F8AFF)]),
+      borderRadius: BorderRadius.circular(fontSize * 0.55),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.auto_awesome_rounded, size: fontSize * 1.05, color: Colors.white),
+      SizedBox(width: fontSize * 0.3),
+      Text('AI',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.4,
+        )),
+    ]),
+  );
+}
+
+/// Full brand lockup: Z symbol + ZCHAT wordmark, with an optional AI tag and
+/// tagline. The one widget every branded header should use.
+class ZBrandLockup extends StatelessWidget {
+  final double symbolSize;
+  final double fontSize;
+  final bool ai;
+  final String? tagline;
+  const ZBrandLockup({
+    super.key,
+    this.symbolSize = 30,
+    this.fontSize = 20,
+    this.ai = false,
+    this.tagline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      ZSymbol(size: symbolSize),
+      SizedBox(width: symbolSize * 0.3),
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            ZWordmark(fontSize: fontSize),
+            if (ai) ...[
+              SizedBox(width: fontSize * 0.34),
+              ZAiTag(fontSize: fontSize * 0.5),
+            ],
+          ]),
+          if (tagline != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                tagline!,
+                style: TextStyle(
+                  color: Colors.white.withAlpha(150),
+                  fontSize: fontSize * 0.55,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ),
+        ],
+      ),
+    ]);
+  }
+}
+
 // ── Glass list tile ───────────────────────────────────────────────────
 class GlassTile extends StatelessWidget {
   final Widget leading;

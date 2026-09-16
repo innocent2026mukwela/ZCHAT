@@ -68,12 +68,27 @@ class FcmService {
   }
 
   /// Call on sign-out to stop receiving notifications.
+  ///
+  /// This must never block sign-out. On iOS without a push entitlement (e.g. a
+  /// sideloaded build), `deleteToken()` waits on an APNs token that never
+  /// arrives and would hang forever — so every step is best-effort with a
+  /// timeout, and failures are swallowed.
   static Future<void> clearToken() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
-      await _db.collection('users').doc(uid).update({'fcmToken': FieldValue.delete()});
+      try {
+        await _db.collection('users').doc(uid)
+            .set({'fcmToken': FieldValue.delete()}, SetOptions(merge: true))
+            .timeout(const Duration(seconds: 3));
+      } catch (e) {
+        debugPrint('[FCM] Could not clear stored token: $e');
+      }
     }
-    await _fcm.deleteToken();
+    try {
+      await _fcm.deleteToken().timeout(const Duration(seconds: 3));
+    } catch (e) {
+      debugPrint('[FCM] Could not delete token: $e');
+    }
   }
 
   // ── Message handlers ─────────────────────────────────────────────────────────

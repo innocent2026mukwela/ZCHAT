@@ -95,8 +95,15 @@ class _ThreadsScreenState extends State<ThreadsScreen> with SingleTickerProvider
               icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
               onPressed: () => context.go('/home'),
             ),
-            title: const Text('zFeed',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 22, letterSpacing: -0.5)),
+            titleSpacing: 0,
+            title: ShaderMask(
+              shaderCallback: (b) => const LinearGradient(
+                begin: Alignment.topLeft, end: Alignment.bottomRight,
+                colors: [Color(0xFF8FBBFF), Color(0xFFA88BFF)],
+              ).createShader(b),
+              child: const Text('zFeed',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 25, letterSpacing: -0.8)),
+            ),
             actions: [
               IconButton(icon: const Icon(Icons.search_rounded, color: Colors.white70), onPressed: () => context.push('/zfeed/search'), tooltip: 'Search'),
               IconButton(icon: const Icon(Icons.bookmark_border_rounded, color: Colors.white70), onPressed: () => context.push('/zfeed/bookmarks'), tooltip: 'Bookmarks'),
@@ -928,6 +935,11 @@ class _ComposeSheetState extends State<_ComposeSheet> {
             decoration: BoxDecoration(color: Colors.white.withAlpha(50), borderRadius: BorderRadius.circular(2)))),
           const SizedBox(height: 14),
 
+          // Sheet title
+          Text(widget.previewPost == null ? 'New post' : 'Reply',
+            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: 0.2)),
+          const SizedBox(height: 14),
+
           // Preview of parent post (for replies)
           if (widget.previewPost != null) ...[
             Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -956,16 +968,27 @@ class _ComposeSheetState extends State<_ComposeSheet> {
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             _AuthorAvatar(photoUrl: widget.myPhotoUrl, colorVal: widget.myColorVal, initials: widget.myInitials, size: 38),
             const SizedBox(width: 12),
-            Expanded(child: TextField(
-              controller: _ctrl, focusNode: _focus,
-              maxLines: 6, minLines: 3,
-              maxLength: _maxChars,
-              style: const TextStyle(color: Colors.white, fontSize: 15),
-              decoration: InputDecoration(
-                hintText: widget.hintText,
-                hintStyle: TextStyle(color: Colors.white.withAlpha(70), fontSize: 15),
-                border: InputBorder.none,
-                counterText: '',
+            Expanded(child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(13),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withAlpha(30)),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: TextField(
+                controller: _ctrl, focusNode: _focus,
+                maxLines: 6, minLines: 3,
+                maxLength: _maxChars,
+                cursorColor: const Color(0xFF7FB4FF),
+                style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.4),
+                decoration: InputDecoration(
+                  hintText: widget.hintText,
+                  hintStyle: TextStyle(color: Colors.white.withAlpha(120), fontSize: 15),
+                  border: InputBorder.none,
+                  isCollapsed: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                  counterText: '',
+                ),
               ),
             )),
           ]),
