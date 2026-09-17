@@ -1,7 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -37,7 +40,10 @@ class _AiChatScreenState extends State<AiChatScreen> {
   int? _speakingIdx;
   String? _course; // null = General mode
   String? _conversationId;
+  String? _pendingImagePath; // an image attached to the next message
   final List<String> _courses = [];
+
+  bool get _canSend => (_hasText || _pendingImagePath != null) && !_loading;
 
   final List<_Msg> _messages = [
     _Msg(text: "Hi! I'm ZChat AI, your academic assistant. Ask me anything about your courses — I'll explain concepts, solve problems, and help you prepare for exams. 📚", isAi: true),
@@ -65,28 +71,52 @@ class _AiChatScreenState extends State<AiChatScreen> {
     ];
   }
 
-  // Conversation history sent to Claude on every turn (role + content pairs)
-  final List<Map<String, String>> _history = [];
+  // Conversation history sent to Claude on every turn (role + content pairs).
+  // Content is text-only here; an attached image is sent with the live turn but
+  // stored as its caption so we never resend the image bytes on later turns.
+  final List<Map<String, dynamic>> _history = [];
 
   Future<void> _send(String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
+    final imagePath = _pendingImagePath;
+    if (trimmed.isEmpty && imagePath == null) return;
 
-    // Add user message to UI and history
+    // Build this turn's content: an image (base64) + optional caption, else text.
+    dynamic outgoingContent = trimmed;
+    if (imagePath != null) {
+      try {
+        final bytes = await File(imagePath).readAsBytes();
+        final media = imagePath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+        outgoingContent = [
+          {'type': 'image', 'source': {'type': 'base64', 'media_type': media, 'data': base64Encode(bytes)}},
+          if (trimmed.isNotEmpty) {'type': 'text', 'text': trimmed},
+        ];
+      } catch (_) {
+        outgoingContent = trimmed; // fall back to text-only if the file can't be read
+      }
+    }
+
+    // Add user message to UI
     setState(() {
-      _messages.add(_Msg(text: trimmed, isAi: false));
+      _messages.add(_Msg(text: trimmed, isAi: false, imagePath: imagePath));
       _loading = true;
       _hasText = false;
+      _pendingImagePath = null;
     });
     _ctrl.clear();
-    _history.add({'role': 'user', 'content': trimmed});
+
+    // Send prior text history + this turn (image included); persist only the
+    // caption to history so future turns never resend the image bytes.
+    final outgoing = List<Map<String, dynamic>>.from(_history)
+      ..add({'role': 'user', 'content': outgoingContent});
+    _history.add({'role': 'user', 'content': trimmed.isNotEmpty ? trimmed : '[image]'});
     _scrollDown();
 
     final buffer = StringBuffer();
     int? aiIdx; // index of the streaming AI message, created on the first token
     try {
       await for (final evt in AiService.chatStream(
-        messages: List.from(_history),
+        messages: outgoing,
         courseId: _course?.replaceAll(' ', ''),
         conversationId: _conversationId,
       )) {
@@ -241,6 +271,14 @@ class _AiChatScreenState extends State<AiChatScreen> {
     });
   }
 
+  Future<void> _pickImage() async {
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery, maxWidth: 1600, imageQuality: 80);
+      if (picked != null && mounted) setState(() => _pendingImagePath = picked.path);
+    } catch (_) {/* permission denied / cancelled */}
+  }
+
   void _scrollDown() => Future.delayed(const Duration(milliseconds: 100), () {
     if (_scroll.hasClients) _scroll.animateTo(_scroll.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
   });
@@ -357,51 +395,78 @@ class _AiChatScreenState extends State<AiChatScreen> {
       child: Container(
         decoration: BoxDecoration(color: Colors.white.withAlpha(12), border: Border(top: BorderSide(color: Colors.white.withAlpha(20)))),
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-        child: SafeArea(top: false, child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(22),
-              child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                child: Container(
-                  constraints: const BoxConstraints(maxHeight: 120),
-                  decoration: BoxDecoration(color: Colors.white.withAlpha(18), borderRadius: BorderRadius.circular(22), border: Border.all(color: Colors.white.withAlpha(35))),
-                  child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                    const SizedBox(width: 4),
-                    VoiceInputButton(onResult: _onVoiceResult),
-                    Expanded(
-                      child: TextField(
-                        controller: _ctrl, maxLines: null,
-                        style: const TextStyle(color: Colors.white, fontSize: 14),
-                        decoration: InputDecoration(
-                          hintText: 'Ask anything…', hintStyle: TextStyle(color: Colors.white.withAlpha(100)),
-                          border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 10), filled: false,
-                        ),
-                        onChanged: (v) => setState(() => _hasText = v.trim().isNotEmpty),
-                        onSubmitted: _send,
+        child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (_pendingImagePath != null) _pendingImagePreview(),
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    constraints: const BoxConstraints(maxHeight: 120),
+                    decoration: BoxDecoration(color: Colors.white.withAlpha(18), borderRadius: BorderRadius.circular(22), border: Border.all(color: Colors.white.withAlpha(35))),
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                      const SizedBox(width: 4),
+                      VoiceInputButton(onResult: _onVoiceResult),
+                      IconButton(
+                        icon: Icon(Icons.image_outlined, color: Colors.white.withAlpha(160), size: 22),
+                        onPressed: _pickImage,
+                        tooltip: 'Attach a photo',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                       ),
-                    ),
-                  ]),
-                )),
-            ),
-          ),
-          const SizedBox(width: 8),
-          GestureDetector(
-            onTap: _hasText ? () => _send(_ctrl.text) : null,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                color: _hasText ? const Color(0xFF7C3AED) : Colors.white.withAlpha(20),
-                shape: BoxShape.circle,
-                boxShadow: _hasText ? [BoxShadow(color: const Color(0xFF7C3AED).withAlpha(100), blurRadius: 12)] : [],
+                      Expanded(
+                        child: TextField(
+                          controller: _ctrl, maxLines: null,
+                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                          decoration: InputDecoration(
+                            hintText: 'Ask anything…', hintStyle: TextStyle(color: Colors.white.withAlpha(100)),
+                            border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(vertical: 10), filled: false,
+                          ),
+                          onChanged: (v) => setState(() => _hasText = v.trim().isNotEmpty),
+                          onSubmitted: (_) { if (_canSend) _send(_ctrl.text); },
+                        ),
+                      ),
+                    ]),
+                  )),
               ),
-              child: Icon(Icons.send_rounded, color: _hasText ? Colors.white : Colors.white.withAlpha(120), size: 20),
             ),
-          ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: _canSend ? () => _send(_ctrl.text) : null,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 44, height: 44,
+                decoration: BoxDecoration(
+                  color: _canSend ? const Color(0xFF7C3AED) : Colors.white.withAlpha(20),
+                  shape: BoxShape.circle,
+                  boxShadow: _canSend ? [BoxShadow(color: const Color(0xFF7C3AED).withAlpha(100), blurRadius: 12)] : [],
+                ),
+                child: Icon(Icons.send_rounded, color: _canSend ? Colors.white : Colors.white.withAlpha(120), size: 20),
+              ),
+            ),
+          ]),
         ])),
       ),
     ),
+  );
+
+  Widget _pendingImagePreview() => Padding(
+    padding: const EdgeInsets.only(bottom: 8, left: 4, right: 4),
+    child: Row(children: [
+      ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.file(File(_pendingImagePath!), width: 52, height: 52, fit: BoxFit.cover),
+      ),
+      const SizedBox(width: 10),
+      Expanded(child: Text('Photo attached — add a question or send',
+        style: TextStyle(color: Colors.white.withAlpha(180), fontSize: 13))),
+      IconButton(
+        icon: Icon(Icons.close_rounded, color: Colors.white.withAlpha(160), size: 20),
+        onPressed: () => setState(() => _pendingImagePath = null),
+      ),
+    ]),
   );
 
   void _showCourseSelector(BuildContext context) {
@@ -486,9 +551,20 @@ class _Bubble extends StatelessWidget {
             ]),
             const SizedBox(height: 6),
           ],
-          msg.isAi
-              ? AiMarkdown(msg.text)
-              : Text(msg.text, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.5)),
+          if (!msg.isAi && msg.imagePath != null) ...[
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.file(File(msg.imagePath!), fit: BoxFit.cover),
+              ),
+            ),
+            if (msg.text.isNotEmpty) const SizedBox(height: 8),
+          ],
+          if (msg.isAi)
+            AiMarkdown(msg.text)
+          else if (msg.text.isNotEmpty)
+            Text(msg.text, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.5)),
         ]),
       ),
     ).animate(delay: (index * 20).ms).fadeIn().slideY(begin: 0.08, end: 0);
@@ -544,4 +620,9 @@ class _Suggestions extends StatelessWidget {
   ]).animate().fadeIn(delay: 300.ms);
 }
 
-class _Msg { final String text; final bool isAi; const _Msg({required this.text, required this.isAi}); }
+class _Msg {
+  final String text;
+  final bool isAi;
+  final String? imagePath; // local path of an attached photo (user messages)
+  const _Msg({required this.text, required this.isAi, this.imagePath});
+}

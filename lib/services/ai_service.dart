@@ -36,7 +36,7 @@ class AiService {
   ///
   /// Returns `{'reply': String, 'conversationId': String}`.
   static Future<Map<String, dynamic>> chat({
-    required List<Map<String, String>> messages,
+    required List<Map<String, dynamic>> messages,
     String? courseId,
     String? conversationId,
   }) async {
@@ -74,7 +74,7 @@ class AiService {
   /// On mobile this streams token-by-token; on Flutter web the http client may
   /// buffer the response, so the reply can arrive in fewer, larger chunks.
   static Stream<Map<String, dynamic>> chatStream({
-    required List<Map<String, String>> messages,
+    required List<Map<String, dynamic>> messages,
     String? courseId,
     String? conversationId,
   }) async* {
