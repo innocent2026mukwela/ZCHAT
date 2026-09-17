@@ -190,7 +190,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     initial: _about,
     label: 'About',
     icon: Icons.info_outline_rounded,
-    hint: 'Hey there! I am using ZCHAT.',
+    hint: 'Available on ZCHAT.',
     onSave: (v) => _save({'about': v}),
   );
 

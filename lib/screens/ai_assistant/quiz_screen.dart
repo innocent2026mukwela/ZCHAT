@@ -221,7 +221,7 @@ class _QuizScreenState extends State<QuizScreen> {
                 color: _selected == q.ans ? const Color(0xFF86EFAC) : Colors.redAccent, size: 16),
               const SizedBox(width: 8),
               Expanded(child: Text(
-                _selected == q.ans ? 'Correct! Well done 🎉' : 'Not quite. Answer: "${q.opts[q.ans]}"',
+                _selected == q.ans ? 'Correct' : 'Not quite. Answer: "${q.opts[q.ans]}"',
                 style: TextStyle(fontSize: 13, color: _selected == q.ans ? const Color(0xFF86EFAC) : Colors.redAccent, fontWeight: FontWeight.w600))),
             ]),
           ).animate().fadeIn(),
@@ -229,7 +229,7 @@ class _QuizScreenState extends State<QuizScreen> {
           SizedBox(width: double.infinity, child: ElevatedButton(
             onPressed: _next,
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7C3AED), minimumSize: const Size(double.infinity, 50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-            child: Text(_cur < _questions!.length - 1 ? 'Next →' : 'See Results', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            child: Text(_cur < _questions!.length - 1 ? 'Next' : 'See Results', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
           )).animate().fadeIn().slideY(begin: 0.2, end: 0),
         ],
       ]),
@@ -251,7 +251,7 @@ class _QuizScreenState extends State<QuizScreen> {
             child: Text('$pct%', style: TextStyle(fontSize: 40, fontWeight: FontWeight.w900, color: pass ? const Color(0xFF86EFAC) : const Color(0xFFFBBF24))),
           ).animate().scale(duration: 600.ms, curve: Curves.elasticOut),
           const SizedBox(height: 20),
-          Text(pass ? 'Excellent! 🎉' : 'Keep Practising! 💪', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white)).animate(delay: 200.ms).fadeIn(),
+          Text(pass ? 'Well done' : 'Keep practising', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white)).animate(delay: 200.ms).fadeIn(),
           const SizedBox(height: 6),
           Text('$_score out of ${_questions!.length} correct', style: TextStyle(fontSize: 15, color: Colors.white.withAlpha(160))).animate(delay: 260.ms).fadeIn(),
           const SizedBox(height: 40),

@@ -181,7 +181,7 @@ class _FeedTab extends StatelessWidget {
                     Icon(Icons.dynamic_feed_rounded, size: 52, color: Colors.white24),
                     const SizedBox(height: 14),
                     Text(
-                      isFollowingTab ? 'Follow some people to see their posts here.' : 'No posts yet. Be the first!',
+                      isFollowingTab ? 'Follow people to see their posts here.' : 'No posts yet.',
                       style: const TextStyle(color: Colors.white38, fontSize: 15),
                       textAlign: TextAlign.center),
                   ]),
@@ -601,7 +601,7 @@ class _ThreadDetailScreenState extends State<ThreadDetailScreen> {
                     if (replies.isEmpty)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 32),
-                        child: Center(child: Text('No replies yet. Be the first!',
+                        child: Center(child: Text('No replies yet.',
                           style: TextStyle(color: Colors.white.withAlpha(80), fontSize: 14))),
                       )
                     else

@@ -97,7 +97,7 @@ class _PaperListScreenState extends State<PaperListScreen> {
                     child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                       Icon(Icons.picture_as_pdf_rounded, size: 52, color: Colors.white.withAlpha(60)),
                       const SizedBox(height: 12),
-                      Text('No papers yet.\nTap ↑ to upload the first one!',
+                      Text('No past papers yet.\nUse the upload button to add one.',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white.withAlpha(120), height: 1.5)),
                     ]),

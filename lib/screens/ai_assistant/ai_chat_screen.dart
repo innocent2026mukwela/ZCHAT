@@ -46,28 +46,28 @@ class _AiChatScreenState extends State<AiChatScreen> {
   bool get _canSend => (_hasText || _pendingImagePath != null) && !_loading;
 
   final List<_Msg> _messages = [
-    _Msg(text: "Hi! I'm ZChat AI, your academic assistant. Ask me anything about your courses — I'll explain concepts, solve problems, and help you prepare for exams. 📚", isAi: true),
+    _Msg(text: "I'm ZChat AI, your academic assistant. Ask me about your courses — I can explain concepts, work through problems, and help you prepare for exams.", isAi: true),
   ];
 
   static const _defaultSuggestions = [
-    '📊 Explain recursion with examples',
-    '⚡ What is Big-O notation?',
-    '🌳 Summarise binary search trees',
-    '🔢 Sorting algorithm practice',
-    '💡 How does dynamic programming work?',
-    '🎯 Exam tips for Data Structures',
+    'Explain recursion with examples',
+    'What is Big-O notation?',
+    'Summarise binary search trees',
+    'Sorting algorithm practice',
+    'How does dynamic programming work?',
+    'Exam tips for Data Structures',
   ];
 
   List<String> get _activeSuggestions {
     final c = _course;
     if (c == null) return _defaultSuggestions;
     return [
-      '📚 Explain a key concept in $c',
-      '❓ Give me practice questions for $c',
-      '📋 What are common exam topics in $c?',
-      '📝 Summarise the main topics in $c',
-      '💡 How should I study for $c?',
-      '🔑 What are the most important topics in $c?',
+      'Explain a key concept in $c',
+      'Give me practice questions for $c',
+      'What are common exam topics in $c?',
+      'Summarise the main topics in $c',
+      'How should I study for $c?',
+      'What are the most important topics in $c?',
     ];
   }
 
@@ -141,7 +141,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
         } else if (evt['error'] != null) {
           setState(() {
             _loading = false;
-            final m = _Msg(text: '⚠️ ${evt['error']}', isAi: true);
+            final m = _Msg(text: '${evt['error']}', isAi: true);
             if (aiIdx == null) { _messages.add(m); aiIdx = _messages.length - 1; }
             else { _messages[aiIdx!] = m; }
           });
@@ -151,12 +151,12 @@ class _AiChatScreenState extends State<AiChatScreen> {
       if (reply.isNotEmpty) {
         _history.add({'role': 'assistant', 'content': reply});
       } else if (aiIdx == null && mounted) {
-        setState(() => _messages.add(_Msg(text: '⚠️ No response received.', isAi: true)));
+        setState(() => _messages.add(_Msg(text: 'No response received. Please try again.', isAi: true)));
       }
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        final m = _Msg(text: '⚠️ ${e.toString().replaceFirst('Exception: ', '')}', isAi: true);
+        final m = _Msg(text: e.toString().replaceFirst('Exception: ', ''), isAi: true);
         if (aiIdx == null) { _messages.add(m); } else { _messages[aiIdx!] = m; }
       });
     } finally {
@@ -218,7 +218,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _loadingHistory = false);
-        _messages.add(_Msg(text: '⚠️ Could not load conversation history.', isAi: true));
+        _messages.add(_Msg(text: 'Could not load conversation history.', isAi: true));
       }
     }
   }
@@ -358,7 +358,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                         onSelected: (v) {
                           if (v == 'quiz') context.push('/ai/quiz/${_course ?? 'General'}');
                           if (v == 'summary') context.push('/ai/summaries/${_course ?? 'General'}');
-                          if (v == 'clear') setState(() { _messages.clear(); _history.clear(); _messages.add(_Msg(text: 'Chat cleared. Ask me anything! 🎯', isAi: true)); });
+                          if (v == 'clear') setState(() { _messages.clear(); _history.clear(); _messages.add(_Msg(text: 'Chat cleared. How can I help?', isAi: true)); });
                         },
                       ),
                     ]),
@@ -610,7 +610,7 @@ class _Suggestions extends StatelessWidget {
     Padding(padding: const EdgeInsets.only(left: 4, bottom: 8),
       child: Text('Suggested', style: TextStyle(fontSize: 11, color: Colors.white.withAlpha(140), fontWeight: FontWeight.w600))),
     Wrap(spacing: 8, runSpacing: 8, children: suggestions.map((s) => GestureDetector(
-      onTap: () => onTap(s.replaceAll(RegExp(r'^\S+ '), '')),
+      onTap: () => onTap(s),
       child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(color: Colors.white.withAlpha(15), borderRadius: BorderRadius.circular(20),
           border: Border.all(color: const Color(0xFF7C3AED).withAlpha(80))),

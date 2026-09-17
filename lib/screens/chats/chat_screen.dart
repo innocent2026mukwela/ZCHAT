@@ -4168,7 +4168,7 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
   Widget build(BuildContext context) {
     final photoUrl = _profile?['photoUrl'] as String? ?? '';
     final phone    = _profile?['phoneNumber'] as String? ?? '';
-    final about    = _profile?['about'] as String? ?? 'Hey there! I am using ZCHAT.';
+    final about    = _profile?['about'] as String? ?? 'Available on ZCHAT.';
     final role     = _profile?['role'] as String? ?? 'student';
 
     return DraggableScrollableSheet(
