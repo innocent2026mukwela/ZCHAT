@@ -10,6 +10,8 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shimmer/shimmer.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../services/ai_service.dart';
 import '../../services/threads_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
@@ -75,6 +77,41 @@ class _ThreadsScreenState extends State<ThreadsScreen> with SingleTickerProvider
     );
   }
 
+  bool _sourcingTrends = false;
+
+  /// Ask the server to source a few trending, university-relevant threads and
+  /// post them to the feed as labelled "ZCHAT Trends".
+  Future<void> _sourceTrends() async {
+    if (_sourcingTrends) return;
+    setState(() => _sourcingTrends = true);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(
+      content: Text('Sourcing trending threads…'),
+      backgroundColor: Color(0xFF2563EB), behavior: SnackBarBehavior.floating,
+    ));
+    try {
+      final r = await AiService.sourceTrends();
+      final posted = (r['posted'] as num?)?.toInt() ?? 0;
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(posted > 0
+              ? 'Added $posted trending ${posted == 1 ? 'thread' : 'threads'} to your feed.'
+              : 'No new trends found right now.'),
+          backgroundColor: const Color(0xFF16A34A), behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.redAccent, behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _sourcingTrends = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -99,6 +136,13 @@ class _ThreadsScreenState extends State<ThreadsScreen> with SingleTickerProvider
             titleSpacing: 0,
             title: const ZBrandLockup(word: 'ZFEED', symbolSize: 32, fontSize: 21),
             actions: [
+              IconButton(
+                icon: _sourcingTrends
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70))
+                    : const Icon(Icons.trending_up_rounded, color: Colors.white70),
+                onPressed: _sourcingTrends ? null : _sourceTrends,
+                tooltip: 'Refresh trends',
+              ),
               IconButton(icon: const Icon(Icons.search_rounded, color: Colors.white70), onPressed: () => context.push('/zfeed/search'), tooltip: 'Search'),
               IconButton(icon: const Icon(Icons.bookmark_border_rounded, color: Colors.white70), onPressed: () => context.push('/zfeed/bookmarks'), tooltip: 'Bookmarks'),
               const SizedBox(width: 4),
@@ -155,6 +199,27 @@ class _FeedTab extends StatelessWidget {
     this.isFollowingTab = false, this.bookmarkedIds = const {}, this.blockedIds = const {},
   });
 
+  /// Pull curated posts out and re-insert them after every 4 regular posts, so
+  /// they read as "injected" into the feed rather than clustered by timestamp.
+  List<Map<String, dynamic>> _injectCurated(List<Map<String, dynamic>> posts) {
+    final curated = <Map<String, dynamic>>[];
+    final regular = <Map<String, dynamic>>[];
+    for (final p in posts) {
+      (p['curated'] == true ? curated : regular).add(p);
+    }
+    if (curated.isEmpty) return posts;
+    final out = <Map<String, dynamic>>[];
+    var ci = 0;
+    for (var i = 0; i < regular.length; i++) {
+      out.add(regular[i]);
+      if ((i + 1) % 4 == 0 && ci < curated.length) out.add(curated[ci++]);
+    }
+    while (ci < curated.length) {
+      out.add(curated[ci++]);
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<Map<String, dynamic>>>(
@@ -167,9 +232,11 @@ class _FeedTab extends StatelessWidget {
           return Center(child: Text('Could not load posts',
               style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 14)));
         }
-        final posts = (snap.data ?? [])
+        final filtered = (snap.data ?? [])
             .where((p) => !blockedIds.contains(p['authorUid'] as String? ?? ''))
             .toList();
+        // For You interleaves curated "ZCHAT Trends" posts among the regular ones.
+        final posts = isFollowingTab ? filtered : _injectCurated(filtered);
         return RefreshIndicator(
           color: const Color(0xFF4F8AFF),
           backgroundColor: const Color(0xFF0E1829),
@@ -238,6 +305,9 @@ class _ThreadCard extends StatelessWidget {
     final isReposted  = (post['repostedBy'] as List?)?.contains(myUid) ?? false;
     final timeAgo     = ThreadsService.timeAgo(post['createdAt'] as Timestamp?);
     final isOwn       = authorUid == myUid;
+    final curated     = post['curated']    as bool? ?? false;
+    final sourceName  = post['sourceName'] as String? ?? '';
+    final sourceUrl   = post['sourceUrl']  as String? ?? '';
 
     return GestureDetector(
       onTap: () => context.push('/threads/$id', extra: post),
@@ -262,6 +332,21 @@ class _ThreadCard extends StatelessWidget {
                   const SizedBox(width: 4),
                   const Icon(Icons.verified_rounded, size: 15, color: Color(0xFF4F8AFF)),
                 ],
+                if (curated) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF7C3AED).withAlpha(45),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.trending_up_rounded, size: 11, color: Color(0xFFB794F4)),
+                      SizedBox(width: 3),
+                      Text('Trending', style: TextStyle(color: Color(0xFFB794F4), fontSize: 10, fontWeight: FontWeight.w800)),
+                    ]),
+                  ),
+                ],
               ])),
               Text(timeAgo, style: TextStyle(color: Colors.white.withAlpha(90), fontSize: 12)),
               const SizedBox(width: 6),
@@ -273,7 +358,7 @@ class _ThreadCard extends StatelessWidget {
             ]),
             // Role
             Text(
-              authorRole == 'lecturer' ? 'Lecturer' : 'Student',
+              curated ? 'Curated' : (authorRole == 'lecturer' ? 'Lecturer' : 'Student'),
               style: TextStyle(color: Colors.white.withAlpha(90), fontSize: 12),
             ),
             const SizedBox(height: 7),
@@ -289,6 +374,21 @@ class _ThreadCard extends StatelessWidget {
                   placeholder: (c, u) => Container(height: 160, color: Colors.white10),
                   errorWidget: (c, u, e) => const SizedBox.shrink(),
                 ),
+              ),
+            ],
+            if (curated && sourceUrl.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () { launchUrl(Uri.parse(sourceUrl), mode: LaunchMode.externalApplication); },
+                child: Row(children: [
+                  const Icon(Icons.link_rounded, size: 14, color: Color(0xFF4F8AFF)),
+                  const SizedBox(width: 5),
+                  Flexible(child: Text(
+                    'Source: ${sourceName.isNotEmpty ? sourceName : Uri.parse(sourceUrl).host}',
+                    style: const TextStyle(color: Color(0xFF4F8AFF), fontSize: 12.5, fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis)),
+                ]),
               ),
             ],
             const SizedBox(height: 10),

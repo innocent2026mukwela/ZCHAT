@@ -261,6 +261,28 @@ class AiService {
         .timeout(const Duration(seconds: 10));
   }
 
+  /// Triggers server-side sourcing of trending, university-relevant threads
+  /// (posted to ZFeed as labelled "ZCHAT Trends"). Returns `{sourced, posted}`.
+  static Future<Map<String, dynamic>> sourceTrends() async {
+    final headers = await _authHeaders();
+    final response = await http
+        .post(Uri.parse('$_baseUrl/source-trends'), headers: headers, body: '{}')
+        .timeout(const Duration(seconds: 90));
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    throw Exception(_errorFrom(response));
+  }
+
+  static String _errorFrom(http.Response res) {
+    try {
+      return (jsonDecode(res.body) as Map<String, dynamic>)['error'] as String? ??
+          'Request failed (${res.statusCode})';
+    } catch (_) {
+      return 'Request failed (${res.statusCode})';
+    }
+  }
+
   /// Summarises a list of chat messages (plain strings) using Claude.
   /// Returns a summary string with bullet points.
   static Future<String> summarizeChat({
