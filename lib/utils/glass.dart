@@ -133,7 +133,7 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
           centerTitle: centerTitle,
           leading: leading,
           title: Text(title,
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
+            style: const TextStyle(fontFamily: kBrandFont, color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 0.2)),
           iconTheme: const IconThemeData(color: Colors.white),
           actions: actions,
           bottom: bottom,
@@ -243,6 +243,17 @@ class GlowOrbs extends StatelessWidget {
 
 const String kBrandAsset = 'assets/icons/zchat_logo_transparent.png';
 
+/// Brand display typeface (bundled). Used for the ZCHAT wordmark and named-screen
+/// header titles so typography is consistent and on-brand.
+const String kBrandFont = 'SpaceGrotesk';
+
+/// Blue gradient that matches the circular Z symbol, used to colour the wordmark.
+const kBrandBlue = LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: [Color(0xFF7FD8FF), Color(0xFF2E7BFF)],
+);
+
 /// The circular "Z" brand symbol, cropped from the master logo lockup so it can
 /// sit beside a typographic wordmark at any size. Falls back to a drawn glyph.
 class ZSymbol extends StatelessWidget {
@@ -291,34 +302,52 @@ class _FallbackZ extends StatelessWidget {
   );
 }
 
-/// Typographic ZCHAT wordmark with a subtle gradient sheen. Pass a solid
-/// [color] to opt out of the gradient (e.g. on light surfaces).
+/// A brand wordmark set in the outlined "double-struck" style — hollow letters
+/// with a blue gradient stroke (matched to the Z symbol) plus a soft glow. The
+/// text is always rendered in capitals. Only the [text] changes per surface
+/// (ZCHAT · ZFEED · ZCHAT AI); the treatment stays identical for uniformity.
 class ZWordmark extends StatelessWidget {
   final double fontSize;
-  final Color? color;
-  const ZWordmark({super.key, this.fontSize = 20, this.color});
+  final String text;
+  const ZWordmark({super.key, this.fontSize = 20, this.text = 'ZCHAT'});
 
   @override
   Widget build(BuildContext context) {
-    final text = Text(
-      'ZCHAT',
-      style: TextStyle(
-        fontSize: fontSize,
-        fontWeight: FontWeight.w800,
-        letterSpacing: fontSize * 0.13,
-        height: 1.0,
-        color: color ?? Colors.white,
+    final label = text.toUpperCase();
+    final stroke = (fontSize * 0.05).clamp(1.4, 3.0);
+    final base = TextStyle(
+      fontFamily: kBrandFont,
+      fontSize: fontSize,
+      fontWeight: FontWeight.w700,
+      letterSpacing: fontSize * 0.06,
+      height: 1.0,
+    );
+
+    return Stack(children: [
+      // Soft blue glow behind the outline
+      Text(label,
+        style: base.copyWith(
+          foreground: Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = stroke
+            ..strokeJoin = StrokeJoin.round
+            ..color = const Color(0xFF3BA0FF)
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, fontSize * 0.14),
+        )),
+      // Crisp gradient outline on top
+      ShaderMask(
+        shaderCallback: (r) => kBrandBlue.createShader(r),
+        blendMode: BlendMode.srcIn,
+        child: Text(label,
+          style: base.copyWith(
+            foreground: Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = stroke
+              ..strokeJoin = StrokeJoin.round
+              ..color = Colors.white,
+          )),
       ),
-    );
-    if (color != null) return text;
-    return ShaderMask(
-      shaderCallback: (b) => const LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Color(0xFFF2F7FF), Color(0xFF7FB4FF)],
-      ).createShader(b),
-      child: text,
-    );
+    ]);
   }
 }
 
@@ -339,27 +368,29 @@ class ZAiTag extends StatelessWidget {
       SizedBox(width: fontSize * 0.3),
       Text('AI',
         style: TextStyle(
+          fontFamily: kBrandFont,
           color: Colors.white,
           fontSize: fontSize,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w700,
           letterSpacing: 0.4,
         )),
     ]),
   );
 }
 
-/// Full brand lockup: Z symbol + ZCHAT wordmark, with an optional AI tag and
-/// tagline. The one widget every branded header should use.
+/// Full brand lockup: the constant Z symbol + an outlined wordmark whose [word]
+/// changes per surface (ZCHAT · ZFEED · ZCHAT AI), with an optional tagline.
+/// The one widget every branded header should use, for a uniform identity.
 class ZBrandLockup extends StatelessWidget {
   final double symbolSize;
   final double fontSize;
-  final bool ai;
+  final String word;
   final String? tagline;
   const ZBrandLockup({
     super.key,
     this.symbolSize = 30,
     this.fontSize = 20,
-    this.ai = false,
+    this.word = 'ZCHAT',
     this.tagline,
   });
 
@@ -367,26 +398,21 @@ class ZBrandLockup extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(mainAxisSize: MainAxisSize.min, children: [
       ZSymbol(size: symbolSize),
-      SizedBox(width: symbolSize * 0.3),
+      SizedBox(width: symbolSize * 0.32),
       Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            ZWordmark(fontSize: fontSize),
-            if (ai) ...[
-              SizedBox(width: fontSize * 0.34),
-              ZAiTag(fontSize: fontSize * 0.5),
-            ],
-          ]),
+          ZWordmark(fontSize: fontSize, text: word),
           if (tagline != null)
             Padding(
-              padding: const EdgeInsets.only(top: 2),
+              padding: const EdgeInsets.only(top: 3),
               child: Text(
                 tagline!,
                 style: TextStyle(
-                  color: Colors.white.withAlpha(150),
-                  fontSize: fontSize * 0.55,
+                  fontFamily: kBrandFont,
+                  color: Colors.white.withAlpha(160),
+                  fontSize: fontSize * 0.42,
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0.3,
                 ),

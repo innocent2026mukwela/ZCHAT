@@ -46,3 +46,6 @@ macos/.symlinks/
 *.log
 *.lock
 pubspec.lock
+
+# local brand preview (dev only)
+brand_preview.html

@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
 import '../../services/auth_service.dart';
+import '../../utils/glass.dart';
 
 class LoginScreen extends StatefulWidget {
   final Duration introDelay;
@@ -18,34 +19,11 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStateMixin {
+class _LoginScreenState extends State<LoginScreen> {
   final _formKey    = GlobalKey<FormState>();
   String _fullPhone = '';
   bool _loading     = false;
   String? _error;
-  late final AnimationController _introController;
-
-  @override
-  void initState() {
-    super.initState();
-    _introController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1150),
-      value: widget.introDelay == Duration.zero ? 1 : 0,
-    );
-    if (widget.introDelay != Duration.zero) _revealForm();
-  }
-
-  Future<void> _revealForm() async {
-    await Future.delayed(widget.introDelay);
-    if (mounted) _introController.forward();
-  }
-
-  @override
-  void dispose() {
-    _introController.dispose();
-    super.dispose();
-  }
 
   Future<void> _continue() async {
     if (!_formKey.currentState!.validate() || _fullPhone.isEmpty) return;
@@ -109,98 +87,56 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
             ),
 
             SafeArea(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final logoWidth = (constraints.maxWidth * 0.74).clamp(
-                    220.0,
-                    420.0,
-                  );
-
-                  return AnimatedBuilder(
-                    animation: _introController,
-                    child: _SignInForm(
-                      formKey: _formKey,
-                      loading: _loading,
-                      error: _error,
-                      onPhoneChanged: (phone) => _fullPhone = phone,
-                      onContinue: _continue,
-                    ),
-                    builder: (context, child) {
-                      final progress = _introController.value;
-                      final logoProgress = Curves.easeInOutCubic.transform(progress);
-                      final formProgress = Curves.easeOutCubic.transform(
-                        ((progress - 0.20) / 0.80).clamp(0.0, 1.0),
-                      );
-                      final formOpacity = Curves.easeOut.transform(
-                        ((progress - 0.30) / 0.70).clamp(0.0, 1.0),
-                      );
-                      final logoAlignmentY = Alignment.lerp(
-                        Alignment.center,
-                        const Alignment(0, -0.62),
-                        logoProgress,
-                      )!.y;
-
-                      return Stack(
-                        children: [
-                          Align(
-                            alignment: Alignment(0, logoAlignmentY),
-                            child: _BrandLogo(width: logoWidth),
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 440),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Brand hero (Z symbol + outlined wordmark)
+                        const ZBrandLockup(symbolSize: 58, fontSize: 40),
+                        const SizedBox(height: 12),
+                        Text(
+                          'University of Zambia · Student platform',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white.withAlpha(140),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 0.2,
                           ),
-                          Transform.translate(
-                            offset: Offset(0, (1 - formProgress) * 44),
-                            child: Opacity(
-                              opacity: formOpacity,
-                              child: IgnorePointer(
-                                ignoring: progress < 0.85,
-                                child: SingleChildScrollView(
-                                  padding: EdgeInsets.fromLTRB(
-                                    28,
-                                    constraints.maxHeight * 0.34,
-                                    28,
-                                    40,
-                                  ),
-                                  child: child,
-                                ),
-                              ),
+                        ),
+                        const SizedBox(height: 44),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Enter your phone number',
+                            style: TextStyle(
+                              color: Colors.white.withAlpha(215),
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                        ],
-                      );
-                    },
-                  );
-                },
+                        ),
+                        const SizedBox(height: 12),
+                        _SignInForm(
+                          formKey: _formKey,
+                          loading: _loading,
+                          error: _error,
+                          onPhoneChanged: (phone) => _fullPhone = phone,
+                          onContinue: _continue,
+                        ),
+                      ],
+                    ).animate().fadeIn(delay: widget.introDelay, duration: 500.ms).slideY(begin: 0.05, end: 0),
+                  ),
+                ),
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _BrandLogo extends StatelessWidget {
-  final double width;
-  static const _brandAsset = 'assets/icons/zchat_logo_cutout.png';
-
-  const _BrandLogo({required this.width});
-
-  @override
-  Widget build(BuildContext context) {
-    return Image.asset(
-      _brandAsset,
-      width: width,
-      fit: BoxFit.contain,
-      alignment: Alignment.center,
-      errorBuilder: (context, error, stackTrace) {
-        return const Text(
-          'ZCHAT',
-          style: TextStyle(
-            color: Color(0xFF2EA3FF),
-            fontSize: 34,
-            fontWeight: FontWeight.w900,
-          ),
-        );
-      },
     );
   }
 }

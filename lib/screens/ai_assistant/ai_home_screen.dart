@@ -79,32 +79,10 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
   }
 
   Widget _buildHeader() {
-    return Row(children: [
-      // AI-marked avatar
-      Container(
-        width: 52, height: 52,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: const LinearGradient(colors: [Color(0xFF7C3AED), Color(0xFF4F8AFF)]),
-          boxShadow: [BoxShadow(color: const Color(0xFF7C3AED).withAlpha(110), blurRadius: 18, spreadRadius: 1)],
-        ),
-        child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 26),
-      ),
-      const SizedBox(width: 14),
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Text('ZChat AI',
-              style: TextStyle(color: Colors.white, fontSize: 23, fontWeight: FontWeight.w800, letterSpacing: 0.2)),
-            const SizedBox(width: 8),
-            const ZAiTag(fontSize: 9),
-          ]),
-          const SizedBox(height: 2),
-          Text('Your academic assistant',
-            style: TextStyle(color: const Color(0xFFB794F4).withAlpha(230), fontSize: 13, fontWeight: FontWeight.w500)),
-        ]),
-      ),
-    ]).animate().fadeIn().slideY(begin: -0.05, end: 0);
+    return const Align(
+      alignment: Alignment.centerLeft,
+      child: ZBrandLockup(word: 'ZCHAT AI', symbolSize: 50, fontSize: 26, tagline: 'Your academic assistant'),
+    ).animate().fadeIn().slideY(begin: -0.05, end: 0);
   }
 
   Widget _buildNewChatButton(BuildContext context) {

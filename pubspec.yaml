@@ -103,3 +103,17 @@ flutter:
   assets:
     - assets/images/
     - assets/icons/
+
+  fonts:
+    # Brand display typeface — the ZCHAT wordmark + named-screen header titles.
+    # Space Grotesk is a stylish geometric sans with a modern tech character.
+    - family: SpaceGrotesk
+      fonts:
+        - asset: assets/fonts/SpaceGrotesk-Variable.ttf
+    # Alternates kept available for a quick swap.
+    - family: Sora
+      fonts:
+        - asset: assets/fonts/Sora-Variable.ttf
+    - family: Outfit
+      fonts:
+        - asset: assets/fonts/Outfit-Variable.ttf

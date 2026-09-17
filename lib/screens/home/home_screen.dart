@@ -475,7 +475,7 @@ class _AiAssistantTile extends StatelessWidget {
                 const Flexible(
                   child: Text('ZChat AI',
                     maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.2)),
+                    style: TextStyle(fontFamily: kBrandFont, fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.2)),
                 ),
                 const SizedBox(width: 7),
                 const ZAiTag(fontSize: 8.5),

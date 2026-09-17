@@ -11,6 +11,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../services/threads_service.dart';
+import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
 // ── Main Threads Screen ───────────────────────────────────────────────────────
@@ -96,14 +97,7 @@ class _ThreadsScreenState extends State<ThreadsScreen> with SingleTickerProvider
               onPressed: () => context.go('/home'),
             ),
             titleSpacing: 0,
-            title: ShaderMask(
-              shaderCallback: (b) => const LinearGradient(
-                begin: Alignment.topLeft, end: Alignment.bottomRight,
-                colors: [Color(0xFF8FBBFF), Color(0xFFA88BFF)],
-              ).createShader(b),
-              child: const Text('zFeed',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 25, letterSpacing: -0.8)),
-            ),
+            title: const ZBrandLockup(word: 'ZFEED', symbolSize: 32, fontSize: 21),
             actions: [
               IconButton(icon: const Icon(Icons.search_rounded, color: Colors.white70), onPressed: () => context.push('/zfeed/search'), tooltip: 'Search'),
               IconButton(icon: const Icon(Icons.bookmark_border_rounded, color: Colors.white70), onPressed: () => context.push('/zfeed/bookmarks'), tooltip: 'Bookmarks'),
