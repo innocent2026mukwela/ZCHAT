@@ -5,9 +5,13 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 
-	<!-- Microphone – voice notes, calls -->
+	<!-- Microphone – voice notes, calls, and the "Hey Zee" voice assistant -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>ZCHAT needs microphone access to record voice notes and make calls.</string>
+	<string>ZCHAT needs microphone access to record voice notes, make calls, and talk to the ZChat AI assistant.</string>
+
+	<!-- Speech recognition – voice input for the ZChat AI assistant -->
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>ZCHAT uses speech recognition so you can talk to the ZChat AI assistant.</string>
 
 	<!-- Camera – photo/video messages -->
 	<key>NSCameraUsageDescription</key>

@@ -8,16 +8,19 @@ import 'firebase_options.dart';
 import 'services/call_service.dart';
 import 'services/fcm_service.dart';
 import 'services/planner_service.dart';
+import 'services/voice_assistant_service.dart';
 import 'services/zego_service.dart';
 import 'utils/theme.dart';
 import 'router.dart';
 import 'screens/calls/incoming_call_screen.dart';
+import 'widgets/voice_assistant_overlay.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await FcmService.init();
   await initLocalNotifications();
+  await VoiceAssistantService.instance.init();
 
   // Init Zego if user is already signed in (app relaunch)
   if (FirebaseAuth.instance.currentUser != null) {
@@ -94,6 +97,10 @@ class _UnZAzChatAppState extends State<UnZAzChatApp> {
       theme: AppTheme.light,
       routerConfig: appRouter,
       scaffoldMessengerKey: FcmService.messengerKey,
+      // Mount the "Hey Zee" overlay above every screen (renders nothing when idle).
+      builder: (context, child) => Stack(
+        children: [child ?? const SizedBox.shrink(), const VoiceAssistantOverlay()],
+      ),
     );
   }
 }

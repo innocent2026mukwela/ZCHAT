@@ -12,6 +12,7 @@ import '../../services/chat_service.dart';
 import '../../services/call_service.dart';
 import '../../services/status_service.dart';
 import '../../services/users_api.dart';
+import '../../services/voice_assistant_service.dart';
 import '../calls/outgoing_call_screen.dart';
 import '../../utils/glass.dart';
 import '../../utils/helpers.dart';
@@ -93,6 +94,11 @@ class _GlassHomeAppBar extends StatelessWidget {
                                 onPressed: onSearchTap,
                               )
                             : const SizedBox(width: 0, height: 0),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.auto_awesome_rounded, color: Colors.white),
+                        tooltip: 'Talk to Zee',
+                        onPressed: () => VoiceAssistantService.instance.activate(),
                       ),
                       PopupMenuButton<String>(
                         icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
