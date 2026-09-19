@@ -1070,23 +1070,34 @@ class _ComposeSheetState extends State<_ComposeSheet> {
             const SizedBox(height: 6),
           ],
 
-          // Compose row — clean, borderless, generous
+          // Compose row — dark input box so white text is visible
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             _AuthorAvatar(photoUrl: widget.myPhotoUrl, colorVal: widget.myColorVal, initials: widget.myInitials, size: 40),
             const SizedBox(width: 12),
-            Expanded(child: TextField(
-              controller: _ctrl, focusNode: _focus,
-              maxLines: 8, minLines: 4,
-              maxLength: _maxChars,
-              cursorColor: const Color(0xFF7FB4FF),
-              style: const TextStyle(color: Colors.white, fontSize: 17, height: 1.4),
-              decoration: InputDecoration(
-                hintText: widget.hintText,
-                hintStyle: TextStyle(color: Colors.white.withAlpha(110), fontSize: 17),
-                border: InputBorder.none,
-                isCollapsed: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 6),
-                counterText: '',
+            Expanded(child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(12),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withAlpha(30)),
+              ),
+              child: TextField(
+                controller: _ctrl, focusNode: _focus,
+                maxLines: 8, minLines: 4,
+                maxLength: _maxChars,
+                cursorColor: const Color(0xFF7FB4FF),
+                style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.4),
+                decoration: InputDecoration(
+                  hintText: widget.hintText,
+                  hintStyle: TextStyle(color: Colors.white.withAlpha(110), fontSize: 16),
+                  filled: false, // M3 light theme otherwise fills the field white
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  isCollapsed: true,
+                  contentPadding: EdgeInsets.zero,
+                  counterText: '',
+                ),
               ),
             )),
           ]),

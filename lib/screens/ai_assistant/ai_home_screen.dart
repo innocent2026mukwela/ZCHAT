@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
-import '../../services/ai_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
@@ -17,63 +16,22 @@ class AiHomeScreen extends StatefulWidget {
 }
 
 class _AiHomeScreenState extends State<AiHomeScreen> {
-  List<Map<String, dynamic>> _conversations = [];
-  bool _loading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() { _loading = true; _error = null; });
-    try {
-      final convos = await AiService.fetchConversations();
-      if (mounted) setState(() { _conversations = convos; _loading = false; });
-    } catch (e) {
-      if (mounted) setState(() { _loading = false; _error = e.toString().replaceFirst('Exception: ', ''); });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return GradientScaffold(
       safeArea: true,
       bottomNavigationBar: const AppBottomNavBar(),
-      body: RefreshIndicator(
-        color: const Color(0xFFB794F4),
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          children: [
-            _buildHeader(),
-            const SizedBox(height: 20),
-            _buildNewChatButton(context),
-            const SizedBox(height: 24),
-            if (_loading)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: CircularProgressIndicator(color: Color(0xFFB794F4))),
-              )
-            else if (_error != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: Row(children: [
-                  const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(_error!, style: TextStyle(color: Colors.white.withAlpha(160), fontSize: 13))),
-                  TextButton(onPressed: _load, child: const Text('Retry', style: TextStyle(color: Color(0xFFB794F4)))),
-                ]),
-              )
-            else if (_conversations.isNotEmpty) ..._buildRecentSection(context),
-            const SizedBox(height: 24),
-            _buildSectionTitle('Tools'),
-            const SizedBox(height: 12),
-            _buildToolsGrid(context),
-          ],
-        ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        children: [
+          _buildHeader(),
+          const SizedBox(height: 20),
+          _buildNewChatButton(context),
+          const SizedBox(height: 24),
+          _buildSectionTitle('Tools'),
+          const SizedBox(height: 12),
+          _buildToolsGrid(context),
+        ],
       ),
     );
   }
@@ -81,7 +39,7 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
   Widget _buildHeader() {
     return const Align(
       alignment: Alignment.centerLeft,
-      child: ZBrandLockup(word: 'ZCHAT AI', symbolSize: 50, fontSize: 26, tagline: 'Your academic assistant'),
+      child: ZBrandLockup(word: 'ZCHAT AI', symbolSize: 50, fontSize: 26, tagline: 'Your AI assistant'),
     ).animate().fadeIn().slideY(begin: -0.05, end: 0);
   }
 
@@ -109,38 +67,6 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
         ]),
       ),
     ).animate().fadeIn(delay: 80.ms).slideY(begin: 0.06, end: 0);
-  }
-
-  List<Widget> _buildRecentSection(BuildContext context) {
-    return [
-      _buildSectionTitle('Recent conversations'),
-      const SizedBox(height: 12),
-      ...List.generate(_conversations.length, (i) {
-        final c = _conversations[i];
-        final title = (c['title'] as String?)?.trim();
-        final preview = (c['last_question'] as String?)?.trim();
-        final label = (title != null && title.isNotEmpty)
-            ? title
-            : (preview != null && preview.isNotEmpty ? preview : 'Conversation');
-        final answer = (c['last_answer'] as String?)?.trim() ?? '';
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: GlassTile(
-            leading: Container(
-              width: 40, height: 40,
-              decoration: BoxDecoration(color: const Color(0xFF7C3AED).withAlpha(40), shape: BoxShape.circle),
-              child: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFFB794F4), size: 18),
-            ),
-            title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: answer.isNotEmpty
-                ? Text(answer, maxLines: 1, overflow: TextOverflow.ellipsis)
-                : null,
-            trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white54),
-            onTap: () => context.push('/ai/chat', extra: c['id'] as String?),
-          ),
-        ).animate(delay: (i * 40).ms).fadeIn();
-      }),
-    ];
   }
 
   Widget _buildSectionTitle(String text) => Text(
