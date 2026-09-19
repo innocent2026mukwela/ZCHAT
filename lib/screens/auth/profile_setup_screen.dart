@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
+import '../../data/unza_programs.dart';
 import '../../services/auth_service.dart';
 import '../../utils/glass.dart';
 
@@ -25,9 +26,12 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     'Other',
   ];
   String _university = 'University of Zambia';
+  bool get _isUnza => _university == 'University of Zambia';
+  String? _school;   // UNZA cascading dropdown selection
+  String? _program;  // UNZA cascading dropdown selection
   final _studentCtrl = TextEditingController();
-  final _schoolCtrl = TextEditingController();
-  final _programCtrl = TextEditingController();
+  final _schoolCtrl = TextEditingController();   // free text (non-UNZA, or "Other")
+  final _programCtrl = TextEditingController();   // free text (non-UNZA, or "Other")
   final _staffCtrl = TextEditingController();
   final _departmentCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
@@ -61,6 +65,13 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         return;
       }
     }
+    String? school, program;
+    if (_role == 'student') {
+      school  = _resolvedSchool();
+      program = _resolvedProgram();
+      if (school.isEmpty)  { setState(() => _error = 'Please select your school'); return; }
+      if (program.isEmpty) { setState(() => _error = 'Please select your programme'); return; }
+    }
     setState(() { _loading = true; _error = null; });
     try {
       await AuthService.completeProfile(
@@ -68,8 +79,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         role: _role,
         university: _university,
         studentNumber: _role == 'student' ? _studentCtrl.text.trim() : null,
-        school: _role == 'student' ? _schoolCtrl.text.trim() : null,
-        program: _role == 'student' ? _programCtrl.text.trim() : null,
+        school: school,
+        program: program,
         staffId: _role == 'lecturer' ? _staffCtrl.text.trim() : null,
         department: _role == 'lecturer' ? _departmentCtrl.text.trim() : null,
         lecturerEmail: _role == 'lecturer' ? _emailCtrl.text.trim() : null,
@@ -80,6 +91,75 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  // Resolve the school/programme from the UNZA dropdowns, the "Other" free-text,
+  // or the plain free-text fields (non-UNZA). Always returns a trimmed String.
+  String _resolvedSchool() {
+    if (!_isUnza) return _schoolCtrl.text.trim();
+    if (_school == null) return '';
+    if (_school == kOtherOption) return _schoolCtrl.text.trim();
+    return _school!;
+  }
+
+  String _resolvedProgram() {
+    if (!_isUnza) return _programCtrl.text.trim();
+    if (_program == null) return '';
+    if (_program == kOtherOption) return _programCtrl.text.trim();
+    return _program!;
+  }
+
+  Future<String?> _pickOption(String title, List<String> options, String? current) {
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E1829),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        builder: (_, sc) => Column(children: [
+          const SizedBox(height: 12),
+          Container(width: 40, height: 4,
+            decoration: BoxDecoration(color: Colors.white.withAlpha(40), borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 12),
+          Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Expanded(child: ListView(controller: sc, children: options.map((o) => ListTile(
+            title: Text(o, style: TextStyle(color: o == current ? const Color(0xFF4F8AFF) : Colors.white)),
+            trailing: o == current ? const Icon(Icons.check_rounded, color: Color(0xFF4F8AFF)) : null,
+            onTap: () => Navigator.pop(context, o),
+          )).toList())),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
+  Widget _dropdownField({required IconData icon, required String label, String? value, required VoidCallback onTap, bool enabled = true}) {
+    return Opacity(
+      opacity: enabled ? 1 : 0.5,
+      child: GestureDetector(
+        onTap: enabled ? onTap : null,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white.withAlpha(15),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.white.withAlpha(35)),
+          ),
+          child: Row(children: [
+            Icon(icon, color: const Color(0xFF4F8AFF), size: 20),
+            const SizedBox(width: 12),
+            Expanded(child: Text(value ?? label,
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: value == null ? Colors.white.withAlpha(120) : Colors.white, fontSize: 15))),
+            Icon(Icons.arrow_drop_down_rounded, color: Colors.white.withAlpha(140)),
+          ]),
+        ),
+      ),
+    );
   }
 
   @override
@@ -218,7 +298,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                               ]),
                             ),
                           );
-                          if (picked != null) setState(() => _university = picked);
+                          if (picked != null) setState(() { _university = picked; _school = null; _program = null; });
                         },
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -246,21 +326,54 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                           validator: (v) => (v == null || v.trim().isEmpty) ? 'Student number is required' : null,
                         ).animate(delay: 260.ms).fadeIn().slideY(begin: 0.1, end: 0),
                         const SizedBox(height: 12),
-                        _GlassInput(
-                          controller: _schoolCtrl,
-                          hintText: 'School',
-                          icon: Icons.school_outlined,
-                          textCapitalization: TextCapitalization.words,
-                          validator: (v) => (v == null || v.trim().isEmpty) ? 'School is required' : null,
-                        ).animate(delay: 280.ms).fadeIn().slideY(begin: 0.1, end: 0),
-                        const SizedBox(height: 12),
-                        _GlassInput(
-                          controller: _programCtrl,
-                          hintText: 'Program of study',
-                          icon: Icons.menu_book_outlined,
-                          textCapitalization: TextCapitalization.words,
-                          validator: (v) => (v == null || v.trim().isEmpty) ? 'Program of study is required' : null,
-                        ).animate(delay: 300.ms).fadeIn().slideY(begin: 0.1, end: 0),
+                        if (_isUnza) ...[
+                          _dropdownField(
+                            icon: Icons.school_outlined,
+                            label: 'School',
+                            value: _school,
+                            onTap: () async {
+                              final s = await _pickOption('Select School', unzaSchoolNames, _school);
+                              if (s != null) setState(() { _school = s; _program = null; });
+                            },
+                          ).animate(delay: 280.ms).fadeIn().slideY(begin: 0.1, end: 0),
+                          if (_school == kOtherOption) ...[
+                            const SizedBox(height: 12),
+                            _GlassInput(controller: _schoolCtrl, hintText: 'Enter your school',
+                              icon: Icons.school_outlined, textCapitalization: TextCapitalization.words),
+                          ],
+                          const SizedBox(height: 12),
+                          _dropdownField(
+                            icon: Icons.menu_book_outlined,
+                            label: _school == null ? 'Select a school first' : 'Programme of study',
+                            value: _program,
+                            enabled: _school != null,
+                            onTap: () async {
+                              final p = await _pickOption('Select Programme', programmesFor(_school), _program);
+                              if (p != null) setState(() => _program = p);
+                            },
+                          ).animate(delay: 300.ms).fadeIn().slideY(begin: 0.1, end: 0),
+                          if (_program == kOtherOption) ...[
+                            const SizedBox(height: 12),
+                            _GlassInput(controller: _programCtrl, hintText: 'Enter your programme',
+                              icon: Icons.menu_book_outlined, textCapitalization: TextCapitalization.words),
+                          ],
+                        ] else ...[
+                          _GlassInput(
+                            controller: _schoolCtrl,
+                            hintText: 'School',
+                            icon: Icons.school_outlined,
+                            textCapitalization: TextCapitalization.words,
+                            validator: (v) => (v == null || v.trim().isEmpty) ? 'School is required' : null,
+                          ).animate(delay: 280.ms).fadeIn().slideY(begin: 0.1, end: 0),
+                          const SizedBox(height: 12),
+                          _GlassInput(
+                            controller: _programCtrl,
+                            hintText: 'Program of study',
+                            icon: Icons.menu_book_outlined,
+                            textCapitalization: TextCapitalization.words,
+                            validator: (v) => (v == null || v.trim().isEmpty) ? 'Program of study is required' : null,
+                          ).animate(delay: 300.ms).fadeIn().slideY(begin: 0.1, end: 0),
+                        ],
                       ],
 
                       if (_role == 'lecturer') ...[
