@@ -34,21 +34,29 @@ class AppColors {
 }
 
 class AppTheme {
+  // Dark theme — the whole app renders on dark gradients, so the base theme is
+  // dark. This makes any widget that relies on defaults (text, inputs, cards)
+  // look correct on the dark UI instead of leaking white surfaces.
+  static const _surfaceDark = Color(0xFF0E1829);
+  static const _scaffoldDark = Color(0xFF070F1E);
+
   static ThemeData get light => ThemeData(
     useMaterial3: true,
+    brightness: Brightness.dark,
     colorScheme: ColorScheme.fromSeed(
-      seedColor: AppColors.primary,
-      primary:   AppColors.primary,
-      surface:   AppColors.surface,
-      error:     AppColors.error,
+      seedColor:  AppColors.primary,
+      brightness: Brightness.dark,
+      primary:    AppColors.primaryLight,
+      surface:    _surfaceDark,
+      error:      AppColors.error,
     ),
-    scaffoldBackgroundColor: AppColors.background,
-    textTheme: GoogleFonts.interTextTheme().apply(
-      bodyColor:    AppColors.textDark,
-      displayColor: AppColors.textDark,
+    scaffoldBackgroundColor: _scaffoldDark,
+    textTheme: GoogleFonts.interTextTheme(ThemeData(brightness: Brightness.dark).textTheme).apply(
+      bodyColor:    Colors.white,
+      displayColor: Colors.white,
     ),
     appBarTheme: AppBarTheme(
-      backgroundColor: AppColors.primary,
+      backgroundColor: Colors.transparent,
       foregroundColor: Colors.white,
       elevation: 0,
       centerTitle: false,
@@ -68,7 +76,7 @@ class AppTheme {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: AppColors.inputBg,
+      fillColor: Colors.white.withAlpha(15), // dark-translucent, never white
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
@@ -79,26 +87,26 @@ class AppTheme {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: AppColors.primary, width: 2),
+        borderSide: const BorderSide(color: AppColors.primaryLight, width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: const BorderSide(color: AppColors.error, width: 1.5),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-      labelStyle: const TextStyle(color: AppColors.textMuted),
-      hintStyle: const TextStyle(color: AppColors.textMuted),
+      labelStyle: TextStyle(color: Colors.white.withAlpha(150)),
+      hintStyle: TextStyle(color: Colors.white.withAlpha(110)),
     ),
     cardTheme: CardThemeData(
-      color: Colors.white,
+      color: _surfaceDark,
       elevation: 0,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
     ),
-    dividerTheme: const DividerThemeData(color: AppColors.divider, thickness: 1),
+    dividerTheme: DividerThemeData(color: Colors.white.withAlpha(20), thickness: 1),
     bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-      backgroundColor: Colors.white,
-      selectedItemColor: AppColors.primary,
-      unselectedItemColor: AppColors.textMuted,
+      backgroundColor: Color(0xFF0A1330),
+      selectedItemColor: AppColors.primaryLight,
+      unselectedItemColor: Colors.white54,
       type: BottomNavigationBarType.fixed,
       elevation: 0,
     ),
