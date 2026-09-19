@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -41,10 +41,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
   int? _speakingIdx;
   String? _course; // null = General mode
   String? _conversationId;
-  String? _pendingImagePath; // an image attached to the next message
+  Uint8List? _pendingImageBytes; // an image attached to the next message (web-safe)
+  String _pendingImageMime = 'image/jpeg';
   final List<String> _courses = [];
 
-  bool get _canSend => (_hasText || _pendingImagePath != null) && !_loading;
+  bool get _canSend => (_hasText || _pendingImageBytes != null) && !_loading;
 
   final List<_Msg> _messages = [];
 
@@ -77,30 +78,25 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   Future<void> _send(String text) async {
     final trimmed = text.trim();
-    final imagePath = _pendingImagePath;
-    if (trimmed.isEmpty && imagePath == null) return;
+    final imageBytes = _pendingImageBytes;
+    final imageMime = _pendingImageMime;
+    if (trimmed.isEmpty && imageBytes == null) return;
 
     // Build this turn's content: an image (base64) + optional caption, else text.
     dynamic outgoingContent = trimmed;
-    if (imagePath != null) {
-      try {
-        final bytes = await File(imagePath).readAsBytes();
-        final media = imagePath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-        outgoingContent = [
-          {'type': 'image', 'source': {'type': 'base64', 'media_type': media, 'data': base64Encode(bytes)}},
-          if (trimmed.isNotEmpty) {'type': 'text', 'text': trimmed},
-        ];
-      } catch (_) {
-        outgoingContent = trimmed; // fall back to text-only if the file can't be read
-      }
+    if (imageBytes != null) {
+      outgoingContent = [
+        {'type': 'image', 'source': {'type': 'base64', 'media_type': imageMime, 'data': base64Encode(imageBytes)}},
+        if (trimmed.isNotEmpty) {'type': 'text', 'text': trimmed},
+      ];
     }
 
     // Add user message to UI
     setState(() {
-      _messages.add(_Msg(text: trimmed, isAi: false, imagePath: imagePath));
+      _messages.add(_Msg(text: trimmed, isAi: false, imageBytes: imageBytes));
       _loading = true;
       _hasText = false;
-      _pendingImagePath = null;
+      _pendingImageBytes = null;
     });
     _ctrl.clear();
 
@@ -248,7 +244,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   Future<void> _initTts() async {
     await _tts.setLanguage('en-US');
     // 0.5 is half-speed on web/Android ("slow motion"); tune per platform.
-    await _tts.setSpeechRate(kIsWeb ? 1.0 : (Platform.isIOS ? 0.5 : 0.9));
+    await _tts.setSpeechRate(kIsWeb ? 1.0 : (defaultTargetPlatform == TargetPlatform.iOS ? 0.5 : 0.9));
     await _tts.setPitch(1.0);
     _tts.setCompletionHandler(() { if (mounted) setState(() => _speakingIdx = null); });
   }
@@ -275,7 +271,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
     try {
       final picked = await ImagePicker().pickImage(
         source: ImageSource.gallery, maxWidth: 1600, imageQuality: 80);
-      if (picked != null && mounted) setState(() => _pendingImagePath = picked.path);
+      if (picked == null) return;
+      final bytes = await picked.readAsBytes(); // works on web + mobile
+      final mime = picked.mimeType ??
+          (picked.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+      if (mounted) setState(() { _pendingImageBytes = bytes; _pendingImageMime = mime; });
     } catch (_) {/* permission denied / cancelled */}
   }
 
@@ -463,7 +463,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
         decoration: BoxDecoration(color: Colors.white.withAlpha(12), border: Border(top: BorderSide(color: Colors.white.withAlpha(20)))),
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
         child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          if (_pendingImagePath != null) _pendingImagePreview(),
+          if (_pendingImageBytes != null) _pendingImagePreview(),
           Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             Expanded(
               child: ClipRRect(
@@ -524,14 +524,14 @@ class _AiChatScreenState extends State<AiChatScreen> {
     child: Row(children: [
       ClipRRect(
         borderRadius: BorderRadius.circular(10),
-        child: Image.file(File(_pendingImagePath!), width: 52, height: 52, fit: BoxFit.cover),
+        child: Image.memory(_pendingImageBytes!, width: 52, height: 52, fit: BoxFit.cover),
       ),
       const SizedBox(width: 10),
       Expanded(child: Text('Photo attached — add a question or send',
         style: TextStyle(color: Colors.white.withAlpha(180), fontSize: 13))),
       IconButton(
         icon: Icon(Icons.close_rounded, color: Colors.white.withAlpha(160), size: 20),
-        onPressed: () => setState(() => _pendingImagePath = null),
+        onPressed: () => setState(() => _pendingImageBytes = null),
       ),
     ]),
   );
@@ -618,12 +618,12 @@ class _Bubble extends StatelessWidget {
             ]),
             const SizedBox(height: 6),
           ],
-          if (!msg.isAi && msg.imagePath != null) ...[
+          if (!msg.isAi && msg.imageBytes != null) ...[
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: Image.file(File(msg.imagePath!), fit: BoxFit.cover),
+                child: Image.memory(msg.imageBytes!, fit: BoxFit.cover),
               ),
             ),
             if (msg.text.isNotEmpty) const SizedBox(height: 8),
@@ -690,6 +690,6 @@ class _Suggestions extends StatelessWidget {
 class _Msg {
   final String text;
   final bool isAi;
-  final String? imagePath; // local path of an attached photo (user messages)
-  const _Msg({required this.text, required this.isAi, this.imagePath});
+  final Uint8List? imageBytes; // an attached photo (user messages), web-safe
+  const _Msg({required this.text, required this.isAi, this.imageBytes});
 }
