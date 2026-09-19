@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -35,7 +36,8 @@ class VoiceAssistantService extends ChangeNotifier {
     if (_ttsReady) return;
     try {
       await _tts.setLanguage('en-US');
-      await _tts.setSpeechRate(0.5);
+      // 0.5 is half-speed on web/Android ("slow motion"); tune per platform.
+      await _tts.setSpeechRate(kIsWeb ? 1.0 : (Platform.isIOS ? 0.5 : 0.9));
       await _tts.setPitch(1.0);
       _tts.setCompletionHandler(_onSpeechDone);
       _ttsReady = true;

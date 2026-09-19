@@ -477,17 +477,11 @@ class _AiAssistantTile extends StatelessWidget {
           const SizedBox(width: 13),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                const Flexible(
-                  child: Text('ZChat AI',
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontFamily: kBrandFont, fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.2)),
-                ),
-                const SizedBox(width: 7),
-                const ZAiTag(fontSize: 8.5),
-              ]),
+              const Text('ZCHAT AI',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontFamily: kBrandFont, fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.3)),
               const SizedBox(height: 3),
-              Text('Academic assistant · schedule, summaries & more',
+              Text('Your AI assistant · ask me anything',
                   maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12.5, color: Colors.white.withAlpha(160), height: 1.2)),
             ]),

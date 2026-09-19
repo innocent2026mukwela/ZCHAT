@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/ai_service.dart';
@@ -69,7 +67,6 @@ class _ThreadsScreenState extends State<ThreadsScreen> with SingleTickerProvider
         myInitials: _myInitials, myPhotoUrl: _myPhotoUrl, myColorVal: _myColorVal,
         hintText: "What's on your mind?",
         actionLabel: 'Post',
-        allowImage: true,
         onSubmit: (text, imageUrl) async {
           await ThreadsService.createPost(text.trim(), imageUrl: imageUrl);
         },
@@ -956,12 +953,11 @@ class _ComposeSheet extends StatefulWidget {
   final int myColorVal;
   final Map<String, dynamic>? previewPost;
   final Future<void> Function(String text, String? imageUrl) onSubmit;
-  final bool allowImage;
 
   const _ComposeSheet({
     required this.myInitials, required this.myPhotoUrl, required this.myColorVal,
     required this.hintText, required this.actionLabel, required this.onSubmit,
-    this.previewPost, this.allowImage = false,
+    this.previewPost,
   });
 
   @override
@@ -972,7 +968,6 @@ class _ComposeSheetState extends State<_ComposeSheet> {
   final _ctrl  = TextEditingController();
   final _focus = FocusNode();
   bool _posting = false;
-  File? _image;
 
   static const _maxChars = 280;
 
@@ -986,19 +981,11 @@ class _ComposeSheetState extends State<_ComposeSheet> {
   @override
   void dispose() { _ctrl.dispose(); _focus.dispose(); super.dispose(); }
 
-  Future<void> _pickImage() async {
-    final picked = await ImagePicker()
-        .pickImage(source: ImageSource.gallery, maxWidth: 1600, imageQuality: 82);
-    if (picked != null && mounted) setState(() => _image = File(picked.path));
-  }
-
   Future<void> _submit() async {
-    if (_ctrl.text.trim().isEmpty && _image == null) return;
+    if (_ctrl.text.trim().isEmpty) return;
     setState(() => _posting = true);
     try {
-      String? imageUrl;
-      if (_image != null) imageUrl = await ThreadsService.uploadPostImage(_image!);
-      await widget.onSubmit(_ctrl.text, imageUrl);
+      await widget.onSubmit(_ctrl.text, null);
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
@@ -1016,23 +1003,48 @@ class _ComposeSheetState extends State<_ComposeSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final remaining = _maxChars - _ctrl.text.characters.length;
+    final canPost = _ctrl.text.trim().isNotEmpty && !_posting;
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Container(
         decoration: const BoxDecoration(
           color: Color(0xFF0E1829),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Center(child: Container(width: 40, height: 4,
-            decoration: BoxDecoration(color: Colors.white.withAlpha(50), borderRadius: BorderRadius.circular(2)))),
-          const SizedBox(height: 14),
+            decoration: BoxDecoration(color: Colors.white.withAlpha(45), borderRadius: BorderRadius.circular(2)))),
+          const SizedBox(height: 12),
 
-          // Sheet title
-          Text(widget.previewPost == null ? 'New post' : 'Reply',
-            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: 0.2)),
-          const SizedBox(height: 14),
+          // Header: Cancel · title · Post
+          Row(children: [
+            GestureDetector(
+              onTap: () => Navigator.pop(context),
+              behavior: HitTestBehavior.opaque,
+              child: Text('Cancel', style: TextStyle(color: Colors.white.withAlpha(170), fontSize: 15)),
+            ),
+            Expanded(child: Center(child: Text(widget.previewPost == null ? 'New post' : 'Reply',
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)))),
+            Opacity(
+              opacity: canPost ? 1 : 0.45,
+              child: GestureDetector(
+                onTap: canPost ? _submit : null,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [Color(0xFF2563EB), Color(0xFF7C3AED)]),
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: _posting
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : Text(widget.actionLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                ),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 16),
 
           // Preview of parent post (for replies)
           if (widget.previewPost != null) ...[
@@ -1041,7 +1053,7 @@ class _ComposeSheetState extends State<_ComposeSheet> {
                 photoUrl: widget.previewPost!['authorPhotoUrl'] as String? ?? '',
                 colorVal: widget.previewPost!['avatarColorVal'] as int? ?? 0xFF4F8AFF,
                 initials: widget.previewPost!['avatarInitials'] as String? ?? '?',
-                size: 36,
+                size: 34,
               ),
               const SizedBox(width: 10),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1055,94 +1067,38 @@ class _ComposeSheetState extends State<_ComposeSheet> {
             ]),
             const SizedBox(height: 12),
             Divider(color: Colors.white.withAlpha(15)),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
           ],
 
-          // Compose row
+          // Compose row — clean, borderless, generous
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _AuthorAvatar(photoUrl: widget.myPhotoUrl, colorVal: widget.myColorVal, initials: widget.myInitials, size: 38),
+            _AuthorAvatar(photoUrl: widget.myPhotoUrl, colorVal: widget.myColorVal, initials: widget.myInitials, size: 40),
             const SizedBox(width: 12),
-            Expanded(child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white.withAlpha(13),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withAlpha(30)),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: TextField(
-                controller: _ctrl, focusNode: _focus,
-                maxLines: 6, minLines: 3,
-                maxLength: _maxChars,
-                cursorColor: const Color(0xFF7FB4FF),
-                style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.4),
-                decoration: InputDecoration(
-                  hintText: widget.hintText,
-                  hintStyle: TextStyle(color: Colors.white.withAlpha(120), fontSize: 15),
-                  border: InputBorder.none,
-                  isCollapsed: true,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
-                  counterText: '',
-                ),
+            Expanded(child: TextField(
+              controller: _ctrl, focusNode: _focus,
+              maxLines: 8, minLines: 4,
+              maxLength: _maxChars,
+              cursorColor: const Color(0xFF7FB4FF),
+              style: const TextStyle(color: Colors.white, fontSize: 17, height: 1.4),
+              decoration: InputDecoration(
+                hintText: widget.hintText,
+                hintStyle: TextStyle(color: Colors.white.withAlpha(110), fontSize: 17),
+                border: InputBorder.none,
+                isCollapsed: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 6),
+                counterText: '',
               ),
             )),
           ]),
-          // Selected image preview
-          if (_image != null) ...[
-            const SizedBox(height: 12),
-            Stack(children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Image.file(_image!, height: 180, width: double.infinity, fit: BoxFit.cover),
-              ),
-              Positioned(
-                top: 8, right: 8,
-                child: GestureDetector(
-                  onTap: () => setState(() => _image = null),
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(color: Colors.black.withAlpha(140), shape: BoxShape.circle),
-                    child: const Icon(Icons.close_rounded, color: Colors.white, size: 18),
-                  ),
-                ),
-              ),
-            ]),
-          ],
-          const SizedBox(height: 14),
-
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Row(children: [
-              if (widget.allowImage)
-                GestureDetector(
-                  onTap: _posting ? null : _pickImage,
-                  behavior: HitTestBehavior.opaque,
-                  child: Icon(Icons.image_outlined,
-                      color: Colors.white.withAlpha(_image == null ? 110 : 200), size: 22),
-                ),
-            ]),
-            Row(children: [
-              Text('${_maxChars - _ctrl.text.characters.length}',
-                style: TextStyle(
-                  color: (_maxChars - _ctrl.text.characters.length) <= 20 ? Colors.orangeAccent : Colors.white38,
-                  fontSize: 13, fontWeight: FontWeight.w600)),
-              const SizedBox(width: 14),
-              Opacity(
-                opacity: (_ctrl.text.trim().isNotEmpty || _image != null) ? 1 : 0.45,
-                child: GestureDetector(
-                  onTap: (_posting || (_ctrl.text.trim().isEmpty && _image == null)) ? null : _submit,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Color(0xFF2563EB), Color(0xFF7C3AED)]),
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: _posting
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : Text(widget.actionLabel,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                  ),
-                ),
-              ),
-            ]),
+          const SizedBox(height: 10),
+          Divider(color: Colors.white.withAlpha(15), height: 1),
+          const SizedBox(height: 10),
+          Row(children: [
+            const Spacer(),
+            Text('$remaining',
+              style: TextStyle(
+                color: remaining <= 20 ? Colors.orangeAccent : Colors.white38,
+                fontSize: 13, fontWeight: FontWeight.w600)),
           ]),
         ]),
       ),

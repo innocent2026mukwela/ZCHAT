@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -45,17 +46,15 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   bool get _canSend => (_hasText || _pendingImagePath != null) && !_loading;
 
-  final List<_Msg> _messages = [
-    _Msg(text: "I'm ZChat AI, your academic assistant. Ask me about your courses — I can explain concepts, work through problems, and help you prepare for exams.", isAi: true),
-  ];
+  final List<_Msg> _messages = [];
 
   static const _defaultSuggestions = [
-    'Explain recursion with examples',
-    'What is Big-O notation?',
-    'Summarise binary search trees',
-    'Sorting algorithm practice',
-    'How does dynamic programming work?',
-    'Exam tips for Data Structures',
+    'What can you help me with?',
+    'Draft a message for me',
+    'Explain a tricky concept simply',
+    'Give me some study tips',
+    'Help me plan my day',
+    'Brainstorm some ideas',
   ];
 
   List<String> get _activeSuggestions {
@@ -248,7 +247,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   Future<void> _initTts() async {
     await _tts.setLanguage('en-US');
-    await _tts.setSpeechRate(0.5);
+    // 0.5 is half-speed on web/Android ("slow motion"); tune per platform.
+    await _tts.setSpeechRate(kIsWeb ? 1.0 : (Platform.isIOS ? 0.5 : 0.9));
     await _tts.setPitch(1.0);
     _tts.setCompletionHandler(() { if (mounted) setState(() => _speakingIdx = null); });
   }
@@ -277,6 +277,68 @@ class _AiChatScreenState extends State<AiChatScreen> {
         source: ImageSource.gallery, maxWidth: 1600, imageQuality: 80);
       if (picked != null && mounted) setState(() => _pendingImagePath = picked.path);
     } catch (_) {/* permission denied / cancelled */}
+  }
+
+  void _showRecentConversations() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0A1A4A),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetCtx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        builder: (_, scrollCtrl) => Column(children: [
+          Container(margin: const EdgeInsets.symmetric(vertical: 12), width: 40, height: 4,
+            decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Align(alignment: Alignment.centerLeft,
+              child: Text('Recent conversations', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800))),
+          ),
+          Expanded(child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: AiService.fetchConversations(),
+            builder: (ctx, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator(color: Color(0xFFB794F4)));
+              }
+              final convos = snap.data ?? [];
+              if (convos.isEmpty) {
+                return Center(child: Text('No recent conversations',
+                  style: TextStyle(color: Colors.white.withAlpha(140))));
+              }
+              return ListView.builder(
+                controller: scrollCtrl,
+                itemCount: convos.length,
+                itemBuilder: (c, i) {
+                  final convo = convos[i];
+                  final title = (convo['title'] as String?)?.trim();
+                  final preview = (convo['last_question'] as String?)?.trim();
+                  final label = (title != null && title.isNotEmpty)
+                      ? title : (preview != null && preview.isNotEmpty ? preview : 'Conversation');
+                  final answer = (convo['last_answer'] as String?)?.trim() ?? '';
+                  return ListTile(
+                    leading: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFFB794F4)),
+                    title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+                    subtitle: answer.isNotEmpty
+                        ? Text(answer, maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: Colors.white.withAlpha(140), fontSize: 12))
+                        : null,
+                    onTap: () {
+                      Navigator.pop(sheetCtx);
+                      final id = convo['id'] as String?;
+                      if (id != null) _loadConversation(id);
+                    },
+                  );
+                },
+              );
+            },
+          )),
+        ]),
+      ),
+    );
   }
 
   void _scrollDown() => Future.delayed(const Duration(milliseconds: 100), () {
@@ -351,14 +413,16 @@ class _AiChatScreenState extends State<AiChatScreen> {
                         icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
                         color: const Color(0xFF0A1A4A),
                         itemBuilder: (_) => [
+                          PopupMenuItem(value: 'recent', child: Text('Recent conversations', style: TextStyle(color: Colors.white.withAlpha(220)))),
+                          PopupMenuItem(value: 'new', child: Text('New chat', style: TextStyle(color: Colors.white.withAlpha(220)))),
                           PopupMenuItem(value: 'quiz', child: Text('Generate Quiz', style: TextStyle(color: Colors.white.withAlpha(220)))),
                           PopupMenuItem(value: 'summary', child: Text('View Summaries', style: TextStyle(color: Colors.white.withAlpha(220)))),
-                          PopupMenuItem(value: 'clear', child: Text('Clear Chat', style: TextStyle(color: Colors.white.withAlpha(220)))),
                         ],
                         onSelected: (v) {
+                          if (v == 'recent') _showRecentConversations();
+                          if (v == 'new') setState(() { _messages.clear(); _history.clear(); _conversationId = null; });
                           if (v == 'quiz') context.push('/ai/quiz/${_course ?? 'General'}');
                           if (v == 'summary') context.push('/ai/summaries/${_course ?? 'General'}');
-                          if (v == 'clear') setState(() { _messages.clear(); _history.clear(); _messages.add(_Msg(text: 'Chat cleared. How can I help?', isAi: true)); });
                         },
                       ),
                     ]),
@@ -369,18 +433,21 @@ class _AiChatScreenState extends State<AiChatScreen> {
             Expanded(
               child: _loadingHistory
                   ? const Center(child: CircularProgressIndicator(color: Color(0xFFB794F4)))
-                  : ListView.builder(
-                controller: _scroll,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                itemCount: _messages.length + (_loading ? 1 : 0) + (_messages.length == 1 ? 1 : 0),
-                itemBuilder: (ctx, i) {
-                  if (i == 1 && _messages.length == 1) return _Suggestions(suggestions: _activeSuggestions, onTap: _send);
-                  final mi = (_messages.length == 1 && i > 1) ? i - 1 : i;
-                  if (_loading && mi == _messages.length) return const _Typing();
-                  if (mi >= _messages.length) return const SizedBox();
-                  return _Bubble(msg: _messages[mi], index: mi, onSpeak: _speak, speakingIdx: _speakingIdx);
-                },
-              ),
+                  : (_messages.isEmpty && !_loading)
+                      ? ListView(
+                          controller: _scroll,
+                          padding: const EdgeInsets.fromLTRB(14, 28, 14, 12),
+                          children: [_Suggestions(suggestions: _activeSuggestions, onTap: _send)],
+                        )
+                      : ListView.builder(
+                          controller: _scroll,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          itemCount: _messages.length + (_loading ? 1 : 0),
+                          itemBuilder: (ctx, i) {
+                            if (_loading && i == _messages.length) return const _Typing();
+                            return _Bubble(msg: _messages[i], index: i, onSpeak: _speak, speakingIdx: _speakingIdx);
+                          },
+                        ),
             ),
             _buildInput(),
           ]),
