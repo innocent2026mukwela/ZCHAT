@@ -244,7 +244,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   Future<void> _initTts() async {
     await _tts.setLanguage('en-US');
     // 0.5 is half-speed on web/Android ("slow motion"); tune per platform.
-    await _tts.setSpeechRate(kIsWeb ? 1.0 : (defaultTargetPlatform == TargetPlatform.iOS ? 0.5 : 0.9));
+    await _tts.setSpeechRate(kIsWeb ? 1.4 : (defaultTargetPlatform == TargetPlatform.iOS ? 0.55 : 1.1));
     await _tts.setPitch(1.0);
     _tts.setCompletionHandler(() { if (mounted) setState(() => _speakingIdx = null); });
   }
