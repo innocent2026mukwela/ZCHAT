@@ -1,9 +1,7 @@
-import 'dart:io';
 import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -821,13 +819,7 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
     if (picked == null || !mounted) return;
     setState(() => _posting = true);
     try {
-      final file = File(picked.path);
-      final ref  = FirebaseStorage.instance
-          .ref('status_videos/${FirebaseAuth.instance.currentUser!.uid}'
-              '/${DateTime.now().millisecondsSinceEpoch}.mp4');
-      await ref.putFile(file);
-      final url = await ref.getDownloadURL();
-      await StatusService.postVideoStatus(url, caption: _ctrl.text.trim());
+      await StatusService.postVideoFile(picked.path, caption: _ctrl.text.trim());
       if (mounted) { Navigator.pop(context); widget.onDone(); }
     } catch (e) {
       if (mounted) {

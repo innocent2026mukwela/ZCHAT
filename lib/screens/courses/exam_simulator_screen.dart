@@ -12,11 +12,14 @@ import '../../utils/glass.dart';
 class ExamSimulatorScreen extends StatefulWidget {
   final String courseId;
   final String paperTitle;
+  /// When set, questions are generated from this past paper via `/quiz`.
+  final String? paperId;
 
   const ExamSimulatorScreen({
     super.key,
     required this.courseId,
     required this.paperTitle,
+    this.paperId,
   });
 
   @override
@@ -42,8 +45,19 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
   Future<void> _loadQuestions() async {
     setState(() { _questions = null; _loadError = null; });
     try {
-      final data = await AiService.generateExamQuestions(
-          courseCode: await CoursesService.descriptiveLabel(widget.courseId), numQuestions: 8);
+      final label = await CoursesService.descriptiveLabel(widget.courseId);
+      List<Map<String, dynamic>> data;
+      final paperId = widget.paperId;
+      if (paperId != null && paperId.isNotEmpty) {
+        data = await AiService.generateQuiz(
+          paperId: paperId,
+          courseCode: label,
+          numQuestions: 8,
+        );
+      } else {
+        data = await AiService.generateExamQuestions(
+            courseCode: label, numQuestions: 8);
+      }
       if (!mounted) { return; }
       final questions = data.map((m) {
         final opts = (m['options'] as List?)?.cast<String>() ?? [];
@@ -68,7 +82,7 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
       }).where((q) => q.question.isNotEmpty && q.options.length >= 2).toList();
       if (mounted) { setState(() => _questions = questions); }
     } catch (e) {
-      if (mounted) { setState(() => _loadError = e.toString().replaceFirst('Exception: ', '')); }
+      if (mounted) { setState(() => _loadError = AiService.friendlyError(e)); }
     }
   }
 
@@ -184,7 +198,12 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
               const Text('Practice under exam conditions',
                   style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
               const SizedBox(height: 12),
-              _Rule(Icons.auto_awesome_outlined, 'AI-generated questions for this course'),
+              _Rule(
+                Icons.auto_awesome_outlined,
+                widget.paperId != null && widget.paperId!.isNotEmpty
+                    ? 'AI-generated questions from this past paper'
+                    : 'AI-generated questions for this course',
+              ),
               _Rule(Icons.timer_outlined, 'Time limit: 1h 30m'),
               _Rule(Icons.save_outlined, 'Results and weak topics saved to your profile'),
               _Rule(Icons.analytics_outlined, 'Results identify weak topics for a study path'),
@@ -340,7 +359,7 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
           borderRadius: BorderRadius.circular(18),
           padding: const EdgeInsets.all(16),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('AI feedback', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+            const Text('Study tips', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
             const SizedBox(height: 8),
             Text(
               weakTopics.isEmpty
@@ -352,7 +371,10 @@ class _ExamSimulatorScreenState extends State<ExamSimulatorScreen> {
         ),
         const SizedBox(height: 16),
         ElevatedButton.icon(
-          onPressed: () => context.push('/adaptive-plan/${widget.courseId}'),
+          onPressed: () => context.push(
+            '/adaptive-plan/${Uri.encodeComponent(widget.courseId)}',
+            extra: weakTopics,
+          ),
           icon: const Icon(Icons.route_outlined),
           label: const Text('Generate Study Path'),
           style: ElevatedButton.styleFrom(
@@ -407,7 +429,7 @@ class _AdaptiveLearningPathScreenState extends State<AdaptiveLearningPathScreen>
       )).toList();
       setState(() => _activities = activities);
     } catch (e) {
-      if (mounted) { setState(() => _error = e.toString().replaceFirst('Exception: ', '')); }
+      if (mounted) { setState(() => _error = AiService.friendlyError(e)); }
     }
   }
 

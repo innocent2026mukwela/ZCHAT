@@ -31,6 +31,8 @@ import '../../services/auto_download_service.dart';
 import '../../services/chat_service.dart';
 import '../../services/presence_service.dart';
 import '../../utils/glass.dart';
+import '../../utils/privacy.dart';
+import '../../utils/storage_errors.dart';
 import '../../widgets/emoji_picker_panel.dart';
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -153,10 +155,10 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Failed to send document: ${e.toString().replaceFirst("Exception: ", "")}'),
+          content: Text('Failed to send document: ${friendlyStorageError(e)}'),
           backgroundColor: Colors.redAccent,
           behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
+          duration: const Duration(seconds: 5),
         ));
       }
     }
@@ -167,10 +169,21 @@ class _ChatScreenState extends State<ChatScreen>
     if (picked == null || !mounted) return;
     final result = await _showCaptionSheet(File(picked.path));
     if (result == null) return;
-    await ChatService.sendImage(widget.chatId, File(picked.path),
-        caption: result['caption'] as String? ?? '',
-        viewOnce: result['viewOnce'] as bool? ?? false);
-    Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+    try {
+      await ChatService.sendImage(widget.chatId, File(picked.path),
+          caption: result['caption'] as String? ?? '',
+          viewOnce: result['viewOnce'] as bool? ?? false);
+      Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to send photo: ${friendlyStorageError(e)}'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+        ));
+      }
+    }
   }
 
   Future<void> _pickVideo() async {
@@ -194,9 +207,10 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Failed to send video: ${e.toString().replaceFirst("Exception: ", "")}'),
+          content: Text('Failed to send video: ${friendlyStorageError(e)}'),
           backgroundColor: Colors.redAccent,
           behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
         ));
       }
     }
@@ -1520,10 +1534,11 @@ class _ChatScreenState extends State<ChatScreen>
                 ...seenBy.map((uid) => FutureBuilder<DocumentSnapshot>(
                   future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
                   builder: (ctx, userSnap) {
-                    final name = userSnap.data?.get('fullName') as String?
-                              ?? userSnap.data?.get('displayName') as String?
+                    final data = userSnap.data?.data() as Map<String, dynamic>?;
+                    final name = data?['fullName'] as String?
+                              ?? data?['displayName'] as String?
                               ?? uid.substring(0, 6);
-                    final photo = userSnap.data?.get('photoUrl') as String? ?? '';
+                    final photo = visiblePhotoUrl(data, viewerIsContact: true) ?? '';
                     return ListTile(
                       dense: true,
                       leading: CircleAvatar(
@@ -1947,13 +1962,14 @@ class _Bubble extends StatelessWidget {
   }
 
   Widget _bubbleContent() {
-    if (msg.isImage)   return _ImageBubble(msg: msg);
-    if (msg.isVoice)   return _VoiceBubble(msg: msg);
-    if (msg.isVideo)   return _VideoBubble(msg: msg);
-    if (msg.isSticker) return _StickerBubble(msg: msg);
-    if (msg.isContact) return _ContactBubble(msg: msg);
-    if (msg.isPoll)    return _PollBubble(msg: msg);
-    if (msg.isEvent)   return _EventBubble(msg: msg);
+    if (msg.isImage)    return _ImageBubble(msg: msg);
+    if (msg.isVoice)    return _VoiceBubble(msg: msg);
+    if (msg.isVideo)    return _VideoBubble(msg: msg);
+    if (msg.isDocument) return _DocumentBubble(msg: msg);
+    if (msg.isSticker)  return _StickerBubble(msg: msg);
+    if (msg.isContact)  return _ContactBubble(msg: msg);
+    if (msg.isPoll)     return _PollBubble(msg: msg);
+    if (msg.isEvent)    return _EventBubble(msg: msg);
     if (msg.isLocation) return _LocationBubble(msg: msg);
 
     return Padding(
@@ -2023,8 +2039,9 @@ class _ImageBubbleState extends State<_ImageBubble> {
   @override
   void initState() {
     super.initState();
-    AutoDownloadService.getImages().then((pref) {
-      if (mounted) setState(() => _autoLoad = pref != 'never');
+    AutoDownloadService.getImages().then((pref) async {
+      final ok = await AutoDownloadService.shouldAutoDownload(pref);
+      if (mounted) setState(() => _autoLoad = ok);
     });
   }
 
@@ -2350,8 +2367,9 @@ class _VideoBubbleState extends State<_VideoBubble> {
   @override
   void initState() {
     super.initState();
-    AutoDownloadService.getVideos().then((pref) {
-      if (mounted) setState(() => _autoLoad = pref != 'never');
+    AutoDownloadService.getVideos().then((pref) async {
+      final ok = await AutoDownloadService.shouldAutoDownload(pref);
+      if (mounted) setState(() => _autoLoad = ok);
     });
   }
 
@@ -2846,6 +2864,13 @@ class _EventBubble extends StatelessWidget {
               onPressed: () {
                 final me = FirebaseAuth.instance.currentUser;
                 if (me == null) return;
+                if (!AppConfig.zegoConfigured) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Calls are not configured. Set ZEGO_APP_ID and ZEGO_APP_SIGN.'),
+                    behavior: SnackBarBehavior.floating,
+                  ));
+                  return;
+                }
                 Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => LiveSessionScreen(courseId: title, roomId: roomId),
                 ));
@@ -3278,6 +3303,7 @@ class _Msg {
   final bool isImage;
   final bool isVoice;
   final bool isVideo;
+  final bool isDocument;
   final bool isSticker;
   final bool isContact;
   final bool edited;
@@ -3309,6 +3335,7 @@ class _Msg {
     this.isImage = false,
     this.isVoice = false,
     this.isVideo = false,
+    this.isDocument = false,
     this.isSticker = false,
     this.isContact = false,
     this.edited = false,
@@ -3330,7 +3357,7 @@ class _Msg {
 
   _Msg copyWith({Map<String, int>? reactions}) => _Msg(
     id: id, text: text, sent: sent, time: time, read: read,
-    isImage: isImage, isVoice: isVoice, isVideo: isVideo,
+    isImage: isImage, isVoice: isVoice, isVideo: isVideo, isDocument: isDocument,
     isSticker: isSticker, isContact: isContact,
     edited: edited, viewOnce: viewOnce, viewOnceViewed: viewOnceViewed,
     chatId: chatId,
@@ -3372,6 +3399,7 @@ class _Msg {
       isImage:         type == 'image',
       isVoice:         type == 'voice',
       isVideo:         type == 'video',
+      isDocument:      type == 'document',
       isSticker:       type == 'sticker',
       isContact:       type == 'contact',
       poll:            d['poll']     is Map ? Map<String, dynamic>.from(d['poll']     as Map) : null,
@@ -3389,6 +3417,123 @@ class _Msg {
       replyTo:         replyTo,
       reactions:       reactions.isEmpty ? null : reactions,
       createdAt:       ts?.toDate(),
+    );
+  }
+}
+
+/// Opens a chat document URL, honouring auto-download prefs (never / wifi-only).
+Future<void> _openChatDocument(BuildContext context, String url, {bool force = false}) async {
+  if (url.isEmpty) return;
+  if (!force) {
+    final pref = await AutoDownloadService.getDocs();
+    final ok = await AutoDownloadService.shouldAutoDownload(pref);
+    if (!ok) {
+      if (!context.mounted) return;
+      if (pref == 'never') {
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (dctx) => AlertDialog(
+            backgroundColor: const Color(0xFF0E1829),
+            title: const Text('Download document?', style: TextStyle(color: Colors.white, fontSize: 16)),
+            content: Text(
+              'Auto-download for documents is off. Open this file anyway?',
+              style: TextStyle(color: Colors.white.withAlpha(180)),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Cancel')),
+              TextButton(
+                onPressed: () => Navigator.pop(dctx, true),
+                child: const Text('Open', style: TextStyle(color: Color(0xFF4F8AFF))),
+              ),
+            ],
+          ),
+        );
+        if (proceed != true || !context.mounted) return;
+      } else {
+        // wifi_only while on cellular
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (dctx) => AlertDialog(
+            backgroundColor: const Color(0xFF0E1829),
+            title: const Text('Use mobile data?', style: TextStyle(color: Colors.white, fontSize: 16)),
+            content: Text(
+              'Documents are set to Wi-Fi only. Open this file on cellular?',
+              style: TextStyle(color: Colors.white.withAlpha(180)),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Cancel')),
+              TextButton(
+                onPressed: () => Navigator.pop(dctx, true),
+                child: const Text('Open', style: TextStyle(color: Color(0xFF4F8AFF))),
+              ),
+            ],
+          ),
+        );
+        if (proceed != true || !context.mounted) return;
+      }
+    }
+  }
+  await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+}
+
+// ── Document bubble ───────────────────────────────────────────────────────────
+
+class _DocumentBubble extends StatelessWidget {
+  final _Msg msg;
+  const _DocumentBubble({required this.msg});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = msg.text.replaceFirst('📄 ', '');
+    final url = msg.imageUrl ?? '';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!msg.sent && msg.senderName != null && msg.senderName!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(msg.senderName!,
+                  style: const TextStyle(color: Color(0xFF86EFAC), fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+          InkWell(
+            onTap: url.isEmpty ? null : () => _openChatDocument(context, url),
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withAlpha(35),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Container(
+                  width: 36, height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFBBF24).withAlpha(40),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.insert_drive_file_rounded, color: Color(0xFFFBBF24), size: 20),
+                ),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Text(
+                    name.isEmpty ? 'Document' : name,
+                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(Icons.download_rounded, size: 18, color: Colors.white.withAlpha(160)),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 4),
+          _TimeRow(msg: msg),
+        ],
+      ),
     );
   }
 }
@@ -3861,7 +4006,7 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
                   itemBuilder: (_, i) {
                     final u    = results[i];
                     final name = u['fullName'] as String? ?? u['phoneNumber'] as String? ?? 'Unknown';
-                    final photo = u['photoUrl'] as String? ?? '';
+                    final photo = visiblePhotoUrl(u, viewerIsContact: false) ?? '';
                     return ListTile(
                       leading: CircleAvatar(
                         radius: 18,
@@ -4166,7 +4311,8 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final photoUrl = _profile?['photoUrl'] as String? ?? '';
+    // Shared chat ⇒ treat as contact for privacyPhoto "My contacts".
+    final photoUrl = visiblePhotoUrl(_profile, viewerIsContact: true) ?? '';
     final phone    = _profile?['phoneNumber'] as String? ?? '';
     final about    = _profile?['about'] as String? ?? 'Available on ZCHAT.';
     final role     = _profile?['role'] as String? ?? 'student';
@@ -4358,8 +4504,11 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
               ..._groupMembers.map((m) {
                 final uid   = m['uid'] as String? ?? '';
                 final name  = m['fullName'] as String? ?? m['displayName'] as String? ?? m['phoneNumber'] as String? ?? 'Unknown';
-                final photo = m['photoUrl'] as String? ?? '';
                 final isMe  = uid == FirebaseAuth.instance.currentUser?.uid;
+                // Group peers count as contacts; own photo always visible to self.
+                final photo = isMe
+                    ? (m['photoUrl'] as String? ?? '')
+                    : (visiblePhotoUrl(m, viewerIsContact: true) ?? '');
                 final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
                 final iAmAdmin = _adminUids.contains(myUid);
                 final isAdmin  = _adminUids.contains(uid);
@@ -4403,24 +4552,25 @@ class _ContactInfoSheetState extends State<_ContactInfoSheet> {
             ],
 
             // ── Encryption info ────────────────────────────────────────────
+            // Keys live on the Firestore chat doc — honest labelling, not full E2E.
             ListTile(
               leading: const Icon(Icons.lock_outline_rounded, color: Colors.white70),
               title: const Text('Encryption',
                   style: TextStyle(color: Colors.white)),
               subtitle: Text(
-                'Messages are end-to-end encrypted.',
+                'Messages are encrypted at rest; chat keys are stored on the server.',
                 style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 12),
               ),
               onTap: () => showDialog(
                 context: context,
                 builder: (_) => AlertDialog(
                   backgroundColor: const Color(0xFF0E1829),
-                  title: const Text('End-to-End Encryption',
+                  title: const Text('Message encryption',
                       style: TextStyle(color: Colors.white)),
                   content: Text(
-                    'Messages in this chat are secured with end-to-end encryption. '
-                    'Only you and ${widget.isGroup ? 'group members' : widget.name.split(' ').first} '
-                    'can read them.',
+                    'Message bodies are AES-encrypted per chat. The chat key is stored on '
+                    'the Firestore chat document, so this is not full end-to-end encryption '
+                    'against the server. Only members of this chat should receive messages.',
                     style: TextStyle(color: Colors.white.withAlpha(180), height: 1.5),
                   ),
                   actions: [TextButton(
@@ -4794,8 +4944,7 @@ class _MediaGallerySheetState extends State<_MediaGallerySheet>
                                   icon: const Icon(Icons.open_in_new_rounded,
                                       color: Color(0xFF4F8AFF), size: 18),
                                   onPressed: url.isNotEmpty
-                                      ? () => launchUrl(Uri.parse(url),
-                                          mode: LaunchMode.externalApplication)
+                                      ? () => _openChatDocument(context, url)
                                       : null,
                                 ),
                               );

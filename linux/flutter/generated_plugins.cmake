@@ -8,7 +8,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_volume_controller
   record_linux
   url_launcher_linux
-  zego_express_engine
+  zego_express_engine_for_uikit
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

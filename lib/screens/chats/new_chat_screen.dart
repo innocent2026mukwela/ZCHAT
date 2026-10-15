@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -7,10 +8,12 @@ import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../config.dart';
 import '../../services/chat_service.dart';
 import '../../services/users_api.dart';
 import '../../utils/glass.dart';
 import '../../utils/helpers.dart';
+import '../../utils/privacy.dart';
 
 class NewChatScreen extends StatefulWidget {
   const NewChatScreen({super.key});
@@ -27,22 +30,33 @@ class _NewChatScreenState extends State<NewChatScreen> {
   // Static cache — survives widget rebuilds and screen pops/pushes.
   static List<_ContactEntry>? _cachedContacts;
   static Map<String, _ZchatUser> _cachedZchatMap = {};
+  static List<_DemoPeer>? _cachedDemoPeers;
 
   List<_ContactEntry> _all      = [];
   List<_ContactEntry> _filtered = [];
+  List<_DemoPeer> _demoPeers = [];
+  List<_DemoPeer> _searchHits = [];
 
   // e164 → ZCHAT user data (uid, about, photoUrl, role)
   Map<String, _ZchatUser> _zchatMap = {};
 
   bool _loading         = true;
   bool _zchatChecking   = false;
+  bool _demoLoading     = false;
+  bool _searchingRemote = false;
   String _error         = '';
   String _search        = '';
   final Set<String> _checking = {};
+  Timer? _searchDebounce;
+
+  bool get _demoMode => AppConfig.demoAuth;
 
   @override
   void initState() {
     super.initState();
+    if (_cachedDemoPeers != null) {
+      _demoPeers = _cachedDemoPeers!;
+    }
     if (_cachedContacts != null) {
       // Show cached data immediately — no spinner.
       _all      = _cachedContacts!;
@@ -54,6 +68,33 @@ class _NewChatScreenState extends State<NewChatScreen> {
     } else {
       _loadContacts();
     }
+    if (_demoMode) _loadDemoPeers();
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadDemoPeers() async {
+    if (!_demoMode) return;
+    setState(() => _demoLoading = true);
+    final peers = await UsersApi.listDemoPeers();
+    final list = peers
+        .map((u) => _DemoPeer(
+              uid: u['uid'] as String? ?? '',
+              name: (u['fullName'] as String?)?.trim().isNotEmpty == true
+                  ? u['fullName'] as String
+                  : (u['phoneNumber'] as String? ?? 'Demo User'),
+              phone: u['phoneNumber'] as String? ?? '',
+              // Demo peer list is intentional discovery — treat as contacts except Nobody.
+              photoUrl: visiblePhotoUrl(u, viewerIsContact: true) ?? '',
+            ))
+        .where((p) => p.uid.isNotEmpty)
+        .toList();
+    _cachedDemoPeers = list;
+    if (mounted) setState(() { _demoPeers = list; _demoLoading = false; });
   }
 
   // ── Load ALL phone contacts ───────────────────────────────────────────────
@@ -68,7 +109,10 @@ class _NewChatScreenState extends State<NewChatScreen> {
       if (!silent && mounted) {
         setState(() {
           _loading = false;
-          _error = 'Contacts permission denied.\nEnable Contacts access for ZCHAT in Settings.';
+          // Demo mode can still start chats via Demo peers / search.
+          _error = _demoMode
+              ? ''
+              : 'Contacts permission denied.\nEnable Contacts access for ZCHAT in Settings.';
         });
       }
       return;
@@ -129,7 +173,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
       result[phone] = _ZchatUser(
         uid:      u['uid']      as String? ?? '',
         about:    '',
-        photoUrl: u['photoUrl'] as String? ?? '',
+        photoUrl: visiblePhotoUrl(u, viewerIsContact: true) ?? '',
         role:     u['role']     as String? ?? 'student',
       );
     }
@@ -146,7 +190,37 @@ class _NewChatScreenState extends State<NewChatScreen> {
           : _all.where((e) =>
               e.displayName.toLowerCase().contains(q.toLowerCase()) ||
               e.e164.contains(q) || e.raw.contains(q)).toList();
+      if (q.trim().isEmpty) _searchHits = [];
     });
+
+    _searchDebounce?.cancel();
+    if (!_demoMode || q.trim().length < 2) return;
+    _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+      _searchDemoUsers(q.trim());
+    });
+  }
+
+  Future<void> _searchDemoUsers(String q) async {
+    if (!mounted) return;
+    setState(() => _searchingRemote = true);
+    final users = await UsersApi.searchUsersLocal(q);
+    if (!mounted || _search != q) {
+      if (mounted) setState(() => _searchingRemote = false);
+      return;
+    }
+    final hits = users
+        .map((u) => _DemoPeer(
+              uid: u['uid'] as String? ?? '',
+              name: (u['fullName'] as String?)?.trim().isNotEmpty == true
+                  ? u['fullName'] as String
+                  : (u['phoneNumber'] as String? ?? 'Demo User'),
+              phone: u['phoneNumber'] as String? ?? '',
+              // Free-text search hits are not assumed contacts.
+              photoUrl: visiblePhotoUrl(u, viewerIsContact: false) ?? '',
+            ))
+        .where((p) => p.uid.isNotEmpty)
+        .toList();
+    setState(() { _searchHits = hits; _searchingRemote = false; });
   }
 
   // ── Tap → ZCHAT check → chat or invite ───────────────────────────────────
@@ -361,7 +435,10 @@ class _NewChatScreenState extends State<NewChatScreen> {
                     IconButton(
                       icon: Icon(Icons.refresh_rounded,
                           color: Colors.white.withAlpha(180)),
-                      onPressed: _loadContacts,
+                      onPressed: () {
+                        _loadContacts();
+                        if (_demoMode) _loadDemoPeers();
+                      },
                     ),
                 ]),
               ),
@@ -402,15 +479,15 @@ class _NewChatScreenState extends State<NewChatScreen> {
   }
 
   Widget _buildBody() {
-    if (_loading) {
+    if (_loading && !_demoMode) {
       return const Center(child: CircularProgressIndicator(
           color: Color(0xFF4F8AFF), strokeWidth: 2));
     }
-    if (_error.isNotEmpty) {
+    if (_error.isNotEmpty && !_demoMode) {
       return _ErrorView(error: _error, onRetry: _loadContacts);
     }
 
-    // Build items: [New group, New contact] + two-section contact list
+    // Build items: [New group, New contact] + demo peers + contacts
     final items = <_ListItem>[];
     items.add(_ListItem.action(
       icon: Icons.group_add_rounded, label: 'New group',
@@ -425,6 +502,40 @@ class _NewChatScreenState extends State<NewChatScreen> {
       onTap: _joinViaLink,
     ));
 
+    // Demo: searchable Firestore peers (works without contacts / backend).
+    if (_demoMode) {
+      final q = _search.trim().toLowerCase();
+      final demoShown = q.isEmpty
+          ? _demoPeers
+          : [
+              ..._searchHits,
+              ..._demoPeers.where((p) =>
+                  p.name.toLowerCase().contains(q) ||
+                  p.phone.toLowerCase().contains(q)),
+            ];
+      // Deduplicate by uid (search hits may overlap demo list).
+      final seen = <String>{};
+      final uniqueDemo = <_DemoPeer>[];
+      for (final p in demoShown) {
+        if (seen.add(p.uid)) uniqueDemo.add(p);
+      }
+
+      if (_demoLoading && uniqueDemo.isEmpty) {
+        items.add(_ListItem.sectionHeader('Demo peers', 0));
+      } else if (uniqueDemo.isNotEmpty) {
+        items.add(_ListItem.sectionHeader(
+            q.isEmpty ? 'Demo peers' : 'Matching demo users', uniqueDemo.length));
+        for (final p in uniqueDemo) {
+          items.add(_ListItem.demoPeer(p));
+        }
+      } else if (q.isEmpty) {
+        items.add(_ListItem.hint(
+          'No other demo accounts yet. Sign in on a second device/browser '
+          'with a different phone number to chat 1:1.',
+        ));
+      }
+    }
+
     final onZchat = _filtered.where((e) => _zchatForEntry(e) != null).toList();
     final invite  = _filtered.where((e) => _zchatForEntry(e) == null).toList();
 
@@ -437,11 +548,18 @@ class _NewChatScreenState extends State<NewChatScreen> {
       for (final e in invite) { items.add(_ListItem.contact(e)); }
     }
 
-    if (_filtered.isEmpty && _search.isNotEmpty) {
-      return Center(child: Text('No contacts match "$_search"',
+    final hasDemoResults = _demoMode && (_demoPeers.isNotEmpty || _searchHits.isNotEmpty);
+    if (_filtered.isEmpty && _search.isNotEmpty && !hasDemoResults && !_searchingRemote) {
+      return Center(child: Text(
+        _demoMode
+            ? 'No demo users match "$_search". Try their phone or name.'
+            : 'No contacts match "$_search"',
         style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 14)));
     }
-    if (_all.isEmpty) return const _EmptyView();
+    if (_all.isEmpty && !_demoMode) return const _EmptyView();
+    if (_all.isEmpty && _demoMode && items.length <= 3 && !_demoLoading) {
+      // Only action rows — still show the list so Demo peers hint is visible.
+    }
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 32),
@@ -457,17 +575,33 @@ class _NewChatScreenState extends State<NewChatScreen> {
                 style: TextStyle(color: Colors.white.withAlpha(160),
                     fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
               const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-                decoration: BoxDecoration(
-                  color: Colors.white.withAlpha(20),
-                  borderRadius: BorderRadius.circular(10),
+              if (item.count != null && item.count! > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(20),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text('${item.count}',
+                    style: TextStyle(color: Colors.white.withAlpha(160),
+                        fontSize: 11, fontWeight: FontWeight.w600)),
                 ),
-                child: Text('${item.count}',
-                  style: TextStyle(color: Colors.white.withAlpha(160),
-                      fontSize: 11, fontWeight: FontWeight.w600)),
-              ),
+              if (_demoLoading || _searchingRemote) ...[
+                const SizedBox(width: 10),
+                SizedBox(width: 12, height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5, color: Colors.white.withAlpha(140))),
+              ],
             ]),
+          );
+        }
+
+        if (item.type == _ItemType.hint) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Text(item.label!,
+              style: TextStyle(color: Colors.white.withAlpha(130),
+                  fontSize: 13, height: 1.45)),
           );
         }
 
@@ -493,6 +627,57 @@ class _NewChatScreenState extends State<NewChatScreen> {
               ]),
             ),
           ).animate(delay: (index * 30).ms).fadeIn();
+        }
+
+        if (item.type == _ItemType.demoPeer) {
+          final peer = item.demoPeer!;
+          final color = _colors[peer.name.codeUnitAt(0) % _colors.length];
+          return InkWell(
+            onTap: () => _openChat(peer.uid, peer.name),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.white.withAlpha(8)))),
+              child: Row(children: [
+                CircleAvatar(
+                  radius: 24,
+                  backgroundColor: color,
+                  backgroundImage: peer.photoUrl.isNotEmpty
+                      ? NetworkImage(peer.photoUrl) : null,
+                  child: peer.photoUrl.isEmpty
+                      ? Text(peer.name[0].toUpperCase(),
+                          style: const TextStyle(color: Colors.white,
+                              fontWeight: FontWeight.w700, fontSize: 16))
+                      : null,
+                ),
+                const SizedBox(width: 14),
+                Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(peer.name,
+                      style: const TextStyle(color: Colors.white,
+                          fontWeight: FontWeight.w600, fontSize: 15)),
+                    if (peer.phone.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(peer.phone,
+                        style: TextStyle(color: Colors.white.withAlpha(130), fontSize: 13)),
+                    ],
+                  ],
+                )),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4F8AFF).withAlpha(30),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80)),
+                  ),
+                  child: const Text('DEMO',
+                    style: TextStyle(color: Color(0xFF4F8AFF),
+                        fontSize: 10, fontWeight: FontWeight.w700)),
+                ),
+              ]),
+            ),
+          ).animate(delay: (index * 10).ms).fadeIn();
         }
 
         // Contact tile
@@ -814,7 +999,17 @@ class _ZchatUser {
       required this.photoUrl, required this.role});
 }
 
-enum _ItemType { action, sectionHeader, contact }
+class _DemoPeer {
+  final String uid, name, phone, photoUrl;
+  const _DemoPeer({
+    required this.uid,
+    required this.name,
+    required this.phone,
+    required this.photoUrl,
+  });
+}
+
+enum _ItemType { action, sectionHeader, contact, demoPeer, hint }
 
 class _ListItem {
   final _ItemType type;
@@ -822,10 +1017,11 @@ class _ListItem {
   final IconData? icon;
   final VoidCallback? onTap;
   final _ContactEntry? entry;
+  final _DemoPeer? demoPeer;
   final int? count;
 
   const _ListItem._({required this.type, this.label,
-      this.icon, this.onTap, this.entry, this.count});
+      this.icon, this.onTap, this.entry, this.demoPeer, this.count});
 
   factory _ListItem.action({required IconData icon, required String label,
       required VoidCallback onTap}) =>
@@ -836,6 +1032,12 @@ class _ListItem {
 
   factory _ListItem.contact(_ContactEntry entry) =>
       _ListItem._(type: _ItemType.contact, entry: entry);
+
+  factory _ListItem.demoPeer(_DemoPeer peer) =>
+      _ListItem._(type: _ItemType.demoPeer, demoPeer: peer);
+
+  factory _ListItem.hint(String label) =>
+      _ListItem._(type: _ItemType.hint, label: label);
 }
 
 // ── Error / Empty ─────────────────────────────────────────────────────────────

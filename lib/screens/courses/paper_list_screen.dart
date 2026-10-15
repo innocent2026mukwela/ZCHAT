@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../services/papers_service.dart';
 import '../../utils/glass.dart';
 
@@ -113,9 +112,18 @@ class _PaperListScreenState extends State<PaperListScreen> {
                         isLecturer: _isLecturer,
                         onVerify:   () => _toggleVerify(papers[i]),
                         onDownload: () => _openPdf(papers[i]),
-                        onExamMode: () => context.push(
-                          '/exam-simulator/${Uri.encodeComponent(widget.courseId)}?paper=${papers[i]['year']}_S${papers[i]['semester']}',
-                        ),
+                        onExamMode: () {
+                          final p = papers[i];
+                          final paperId = p['id'] as String? ?? '';
+                          final paperLabel = '${p['year']}_S${p['semester']}';
+                          final q = StringBuffer('paper=${Uri.encodeComponent(paperLabel)}');
+                          if (paperId.isNotEmpty) {
+                            q.write('&paperId=${Uri.encodeComponent(paperId)}');
+                          }
+                          context.push(
+                            '/exam-simulator/${Uri.encodeComponent(widget.courseId)}?$q',
+                          );
+                        },
                       ).animate(delay: (i * 45).ms).fadeIn().slideY(begin: 0.05, end: 0),
                     ),
                   ),
@@ -140,9 +148,12 @@ class _PaperListScreenState extends State<PaperListScreen> {
   Future<void> _openPdf(Map<String, dynamic> paper) async {
     final url = paper['fileUrl'] as String?;
     if (url == null) return;
+    final paperId = paper['id'] as String;
+    final cached = await PapersService.isCached(paperId);
+    if (!mounted) return;
 
-    // Data Saver mode: confirm before pulling the file over a metered connection.
-    if (_bandwidth == 'Data Saver') {
+    // Data Saver: confirm only when we still need a network download.
+    if (_bandwidth == 'Data Saver' && !cached) {
       final size = paper['fileSize'] as String? ?? '';
       final proceed = await showDialog<bool>(
         context: context,
@@ -165,10 +176,13 @@ class _PaperListScreenState extends State<PaperListScreen> {
       if (proceed != true) return;
     }
 
-    await PapersService.recordDownload(paper['id'] as String);
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    await PapersService.recordDownload(paperId);
+    final opened = await PapersService.openPaper(paperId: paperId, fileUrl: url);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not open this paper. Check your connection.'),
+        behavior: SnackBarBehavior.floating,
+      ));
     }
   }
 

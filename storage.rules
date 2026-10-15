@@ -1,14 +1,17 @@
 rules_version = '2';
 
 // UnZA z CHAT — Firebase Storage rules.
-// Media is readable by any signed-in user (so others can see images) but only
-// writable by the owner / chat participants. Deploy:
-//   firebase deploy --only storage
+// Media is readable by any signed-in user (including Firebase Anonymous / demo
+// auth) but only writable by the owner / chat participants.
+//
+// Paths below match what the Flutter client actually uploads.
+// Deploy:  firebase deploy --only storage
 
 service firebase.storage {
   match /b/{bucket}/o {
     function signedIn() { return request.auth != null; }
     function under10MB() { return request.resource.size < 10 * 1024 * 1024; }
+    function under50MB() { return request.resource.size < 50 * 1024 * 1024; }
 
     match /avatars/{uid}/{file=**} {
       allow read:  if signedIn();
@@ -18,19 +21,38 @@ service firebase.storage {
       allow read:  if signedIn();
       allow write: if request.auth.uid == uid && under10MB();
     }
+    // Status photos/videos (client uses both legacy `status/` and `statuses/`,
+    // plus `status_videos/` for video posts).
     match /status/{uid}/{file=**} {
       allow read:  if signedIn();
-      allow write: if request.auth.uid == uid;
+      allow write: if request.auth.uid == uid && under50MB();
+    }
+    match /statuses/{uid}/{file=**} {
+      allow read:  if signedIn();
+      allow write: if request.auth.uid == uid && under50MB();
+    }
+    match /status_videos/{uid}/{file=**} {
+      allow read:  if signedIn();
+      allow write: if request.auth.uid == uid && under50MB();
     }
     match /chat_images/{chatId}/{file=**} {
-      allow read, write: if signedIn();
+      allow read, write: if signedIn() && under10MB();
+    }
+    match /chat_videos/{chatId}/{file=**} {
+      allow read, write: if signedIn() && under50MB();
+    }
+    match /chat_docs/{chatId}/{file=**} {
+      allow read, write: if signedIn() && under50MB();
     }
     match /voice_notes/{chatId}/{file=**} {
-      allow read, write: if signedIn();
+      allow read, write: if signedIn() && under10MB();
+    }
+    match /group_avatars/{file=**} {
+      allow read, write: if signedIn() && under10MB();
     }
     match /papers/{file=**} {
       allow read:  if signedIn();
-      allow write: if signedIn();
+      allow write: if signedIn() && under50MB();
     }
     // Unmatched paths are denied by default.
   }

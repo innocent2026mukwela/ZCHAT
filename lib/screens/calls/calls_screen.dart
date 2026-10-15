@@ -7,6 +7,7 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import '../../config.dart';
 import '../../services/call_service.dart';
 import '../../services/chat_service.dart';
 import '../../services/zego_service.dart';
@@ -38,6 +39,13 @@ void _launchZego(
   required bool video,
   bool isGroup = false,
 }) {
+  if (!AppConfig.zegoConfigured) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Calls are not configured. Set ZEGO_APP_ID and ZEGO_APP_SIGN.'),
+      behavior: SnackBarBehavior.floating,
+    ));
+    return;
+  }
   final me = FirebaseAuth.instance.currentUser!;
   Navigator.of(context).push(MaterialPageRoute(
     builder: (_) => ZegoUIKitPrebuiltCall(

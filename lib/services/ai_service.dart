@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import '../config.dart';
@@ -10,6 +11,72 @@ import '../config.dart';
 class AiService {
   static const _serverBase = AppConfig.backendBase;
   static const _baseUrl    = '$_serverBase/api/ai';
+
+  static bool? _cachedReachable;
+  static DateTime? _cachedReachableAt;
+
+  /// Clear message shown when the Node AI API is not reachable.
+  static String get backendRequiredMessage =>
+      'AI requires the ZCHAT backend at $_serverBase. '
+      'Start the API, or pass --dart-define=BACKEND_URL=… '
+      '(demo login alone does not include AI).';
+
+  /// Lightweight reachability probe (cached ~20s). Does not throw.
+  /// Any HTTP response (including 401/404) counts as reachable.
+  static Future<bool> isBackendReachable({bool force = false}) async {
+    final now = DateTime.now();
+    if (!force &&
+        _cachedReachable != null &&
+        _cachedReachableAt != null &&
+        now.difference(_cachedReachableAt!) < const Duration(seconds: 20)) {
+      return _cachedReachable!;
+    }
+
+    Future<bool> ping(Uri uri, {Map<String, String>? headers}) async {
+      await http.get(uri, headers: headers).timeout(const Duration(seconds: 4));
+      return true;
+    }
+
+    try {
+      await ping(Uri.parse('$_serverBase/api/health'));
+      _cachedReachable = true;
+      _cachedReachableAt = now;
+      return true;
+    } catch (_) {
+      try {
+        Map<String, String>? headers;
+        try {
+          headers = await _authHeaders();
+        } catch (_) {}
+        await ping(Uri.parse('$_baseUrl/conversations'), headers: headers);
+        _cachedReachable = true;
+        _cachedReachableAt = now;
+        return true;
+      } catch (_) {
+        _cachedReachable = false;
+        _cachedReachableAt = now;
+        return false;
+      }
+    }
+  }
+
+  /// True when the failure looks like a connection / timeout problem.
+  static bool isConnectivityFailure(Object error) {
+    final s = error.toString().toLowerCase();
+    return s.contains('socketexception') ||
+        s.contains('failed host lookup') ||
+        s.contains('connection refused') ||
+        s.contains('connection reset') ||
+        s.contains('timed out') ||
+        s.contains('timeout') ||
+        s.contains('network is unreachable') ||
+        s.contains('clientexception');
+  }
+
+  static String friendlyError(Object error) {
+    if (isConnectivityFailure(error)) return backendRequiredMessage;
+    return error.toString().replaceFirst('Exception: ', '');
+  }
 
   /// Fetches the current Firebase ID token and returns auth + content headers.
   static Future<Map<String, String>> _authHeaders() async {
@@ -245,12 +312,21 @@ class AiService {
   }
 
   /// Sends a push notification to [recipientUid] via the backend.
+  /// Honours the recipient's `notifMessages` toggle for chat/message pushes
+  /// (skips the check for ZFeed `feed_*` types).
   static Future<void> sendNotification({
     required String recipientUid,
     required String title,
     required String body,
     Map<String, String> data = const {},
   }) async {
+    final type = data['type'] ?? '';
+    if (!type.startsWith('feed_')) {
+      try {
+        final doc = await FirebaseFirestore.instance.collection('users').doc(recipientUid).get();
+        if ((doc.data()?['notifMessages'] as bool?) == false) return;
+      } catch (_) {}
+    }
     final headers = await _authHeaders();
     await http
         .post(

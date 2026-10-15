@@ -6,6 +6,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/ai_service.dart';
 import '../../utils/glass.dart';
+import '../../widgets/ai_backend_required.dart';
 
 class StudyInsightsScreen extends StatefulWidget {
   const StudyInsightsScreen({super.key});
@@ -19,6 +20,7 @@ class _StudyInsightsScreenState extends State<StudyInsightsScreen> {
 
   bool _loading = true;
   String? _error;
+  String? _planError;
 
   int _aiChatCount    = 0;
   int _courseCount    = 0;
@@ -34,7 +36,7 @@ class _StudyInsightsScreenState extends State<StudyInsightsScreen> {
 
   Future<void> _load() async {
     if (_uid == null) return;
-    setState(() { _loading = true; _error = null; });
+    setState(() { _loading = true; _error = null; _planError = null; });
     try {
       // Parallel Firestore fetches
       final results = await Future.wait([
@@ -53,11 +55,12 @@ class _StudyInsightsScreenState extends State<StudyInsightsScreen> {
       // Backend: AI history + adaptive plan
       final historyData = await AiService.fetchHistory(limit: 10);
       List<Map<String, dynamic>> planData = [];
+      String? planErr;
       if (courses.isNotEmpty) {
         try {
           planData = await AiService.generateAdaptivePlan(courseId: courses.first);
-        } catch (_) {
-          // non-fatal: plan section shows empty
+        } catch (e) {
+          planErr = AiService.friendlyError(e);
         }
       }
 
@@ -68,10 +71,16 @@ class _StudyInsightsScreenState extends State<StudyInsightsScreen> {
         _history      = historyData;
         _aiChatCount  = historyData.length;
         _plan         = planData;
+        _planError    = planErr;
         _loading      = false;
       });
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _loading = false; });
+      if (mounted) {
+        setState(() {
+          _error = AiService.friendlyError(e);
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -136,6 +145,9 @@ class _StudyInsightsScreenState extends State<StudyInsightsScreen> {
       ]));
     }
     if (_error != null) {
+      if (_error == AiService.backendRequiredMessage) {
+        return AiBackendRequiredView(onRetry: _load);
+      }
       return Center(child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -169,8 +181,26 @@ class _StudyInsightsScreenState extends State<StudyInsightsScreen> {
             _sectionTitle('AI-Recommended Focus Areas'),
             const SizedBox(height: 10),
             _buildPlanSection(context),
+          ] else if (_planError != null) ...[
+            _sectionTitle('AI-Recommended Focus Areas'),
+            const SizedBox(height: 10),
+            GlassCard(
+              borderRadius: BorderRadius.circular(16),
+              padding: const EdgeInsets.all(14),
+              child: Row(children: [
+                const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 20),
+                const SizedBox(width: 10),
+                Expanded(child: Text(_planError!,
+                    style: TextStyle(color: Colors.white.withAlpha(170), fontSize: 13, height: 1.35))),
+                TextButton(
+                  onPressed: _load,
+                  style: TextButton.styleFrom(foregroundColor: const Color(0xFF8B5CF6)),
+                  child: const Text('Retry'),
+                ),
+              ]),
+            ),
           ],
-          if (_plan.isEmpty && _courseCount == 0) ...[
+          if (_plan.isEmpty && _planError == null && _courseCount == 0) ...[
             const SizedBox(height: 24),
             _buildOnboardingHint(context),
           ],

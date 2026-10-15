@@ -13,7 +13,11 @@ class ZegoService {
   static Future<void> init() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
-    // Direct call UI only — no push-based invitation service
+    if (!AppConfig.zegoConfigured) {
+      debugPrint('[ZegoService] Skipping init — ZEGO_APP_ID / ZEGO_APP_SIGN not set.');
+      return;
+    }
+    // Direct call UI only — push invitations are not wired yet.
   }
 
   static Future<void> uninit() async {}

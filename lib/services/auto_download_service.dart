@@ -1,3 +1,4 @@
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Auto-download preference: 'always', 'wifi_only', 'never'
@@ -23,4 +24,32 @@ class AutoDownloadService {
 
   static Future<void> setDocs(String v) async =>
       (await SharedPreferences.getInstance()).setString(_kDocs, v);
+
+  /// Whether media should auto-load given the user's preference and current
+  /// network. `wifi_only` requires a Wi-Fi (or ethernet) link — cellular alone
+  /// does not qualify.
+  static Future<bool> shouldAutoDownload(String preference) async {
+    switch (preference) {
+      case 'never':
+        return false;
+      case 'always':
+        return true;
+      case 'wifi_only':
+        return _onWifiOrEthernet();
+      default:
+        return preference != 'never';
+    }
+  }
+
+  static Future<bool> _onWifiOrEthernet() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return results.any((r) =>
+          r == ConnectivityResult.wifi ||
+          r == ConnectivityResult.ethernet);
+    } catch (_) {
+      // If we cannot determine the link, do not auto-download on wifi_only.
+      return false;
+    }
+  }
 }

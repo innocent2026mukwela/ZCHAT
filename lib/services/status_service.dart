@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import '../utils/storage_errors.dart';
 
 class StatusService {
   static final _db      = FirebaseFirestore.instance;
@@ -33,10 +34,15 @@ class StatusService {
     final now     = DateTime.now();
     final expires = now.add(const Duration(hours: 24));
 
+    // Path matches storage.rules `status/{uid}/**` (also allowed under statuses/).
     final ref = _storage
         .ref()
-        .child('statuses/$_myUid/${now.millisecondsSinceEpoch}.jpg');
-    await ref.putFile(File(filePath), SettableMetadata(contentType: 'image/jpeg'));
+        .child('status/$_myUid/${now.millisecondsSinceEpoch}.jpg');
+    try {
+      await ref.putFile(File(filePath), SettableMetadata(contentType: 'image/jpeg'));
+    } catch (e) {
+      throw Exception(friendlyStorageError(e));
+    }
     final url = await ref.getDownloadURL();
 
     await _db
@@ -51,6 +57,24 @@ class StatusService {
       'expiresAt': Timestamp.fromDate(expires),
       'viewedBy':  [],
     });
+  }
+
+  /// Uploads a short status video and creates the Firestore item.
+  static Future<void> postVideoFile(String filePath, {String? caption}) async {
+    final now = DateTime.now();
+    final ref = _storage
+        .ref()
+        .child('status/$_myUid/${now.millisecondsSinceEpoch}.mp4');
+    try {
+      await ref.putFile(
+        File(filePath),
+        SettableMetadata(contentType: 'video/mp4'),
+      );
+    } catch (e) {
+      throw Exception(friendlyStorageError(e));
+    }
+    final url = await ref.getDownloadURL();
+    await postVideoStatus(url, caption: caption);
   }
 
   static Future<void> postVideoStatus(String videoUrl, {String? caption}) async {

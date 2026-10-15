@@ -1,9 +1,9 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
+import '../../config.dart';
 import '../../services/auth_service.dart';
 import '../../utils/glass.dart';
 
@@ -29,8 +29,19 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_formKey.currentState!.validate() || _fullPhone.isEmpty) return;
     setState(() { _loading = true; _error = null; });
     try {
-      await AuthService.sendOtp(_fullPhone);
-      if (mounted) context.go('/otp', extra: _fullPhone);
+      final demoOtp = await AuthService.sendOtp(_fullPhone);
+      if (!mounted) return;
+      if (AppConfig.demoAuth && demoOtp != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Demo OTP: $demoOtp  ·  any 6-digit code works'),
+            backgroundColor: const Color(0xFF1A6BE0),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+      context.go('/otp', extra: _fullPhone);
     } catch (e) {
       setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
     } finally {
@@ -45,92 +56,88 @@ class _LoginScreenState extends State<LoginScreen> {
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF03050F),
-              Color(0xFF06112B),
-              Color(0xFF0A2060),
-              Color(0xFF0D3599),
-            ],
-            stops: [0.0, 0.3, 0.65, 1.0],
-          ),
-        ),
-        child: Stack(
-          children: [
-            // Glow orbs
-            Positioned(
-              top: -100, right: -100,
-              child: Container(
-                width: 320, height: 320,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(colors: [
-                    const Color(0xFF2563EB).withAlpha(50), Colors.transparent,
-                  ]),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: -80, left: -80,
-              child: Container(
-                width: 260, height: 260,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(colors: [
-                    const Color(0xFF4F8AFF).withAlpha(35), Colors.transparent,
-                  ]),
-                ),
-              ),
-            ),
-
-            SafeArea(
-              child: Center(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 440),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Brand hero (Z symbol + outlined wordmark)
-                        const ZBrandLockup(symbolSize: 58, fontSize: 40),
-                        const SizedBox(height: 12),
-                        Text(
-                          'University of Zambia · Student platform',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white.withAlpha(140),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                        const SizedBox(height: 44),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Enter your phone number',
+        decoration: const BoxDecoration(gradient: kBgGradient),
+        child: SafeArea(
+          child: Column(
+            children: [
+              if (AppConfig.demoAuth) const _DemoModeBanner(),
+              Expanded(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 440),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const ZBrandLockup(symbolSize: 58, fontSize: 40),
+                          const SizedBox(height: 12),
+                          Text(
+                            'University of Zambia · Campus messaging',
+                            textAlign: TextAlign.center,
                             style: TextStyle(
-                              color: Colors.white.withAlpha(215),
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
+                              color: Colors.white.withAlpha(140),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.2,
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        _SignInForm(
-                          formKey: _formKey,
-                          loading: _loading,
-                          error: _error,
-                          onPhoneChanged: (phone) => _fullPhone = phone,
-                          onContinue: _continue,
-                        ),
-                      ],
-                    ).animate().fadeIn(delay: widget.introDelay, duration: 500.ms).slideY(begin: 0.05, end: 0),
+                          const SizedBox(height: 44),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Enter your phone number',
+                              style: TextStyle(
+                                color: Colors.white.withAlpha(215),
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          _SignInForm(
+                            formKey: _formKey,
+                            loading: _loading,
+                            error: _error,
+                            onPhoneChanged: (phone) => _fullPhone = phone,
+                            onContinue: _continue,
+                          ),
+                        ],
+                      ).animate().fadeIn(delay: widget.introDelay, duration: 400.ms).slideY(begin: 0.04, end: 0),
+                    ),
                   ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DemoModeBanner extends StatelessWidget {
+  const _DemoModeBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFE6A817),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.science_outlined, size: 16, color: Color(0xFF1A1200)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'DEMO MODE — OTP is local; no backend required. '
+                'Disable with --dart-define=DEMO_AUTH=false',
+                style: TextStyle(
+                  color: const Color(0xFF1A1200).withAlpha(230),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  height: 1.3,
                 ),
               ),
             ),
@@ -162,22 +169,11 @@ class _SignInForm extends StatelessWidget {
       key: formKey,
       child: Column(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
+          Container(
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Colors.white.withAlpha(22),
-                      Colors.white.withAlpha(8),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white.withAlpha(40), width: 1),
+                  color: const Color(0xFF152033),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withAlpha(22), width: 1),
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                 child: IntlPhoneField(
@@ -225,59 +221,50 @@ class _SignInForm extends StatelessWidget {
                     return null;
                   },
                 ),
-              ),
-            ),
           ),
           if (error != null) ...[
             const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withAlpha(30),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.red.withAlpha(80)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.error_outline_rounded,
-                        color: Colors.redAccent,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          error!,
-                          style: const TextStyle(
-                            color: Colors.redAccent,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.red.withAlpha(30),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.red.withAlpha(80)),
               ),
-            ).animate().fadeIn().shake(),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    color: Colors.redAccent,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      error!,
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ).animate().fadeIn(),
           ],
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
-            height: 54,
+            height: 52,
             child: ElevatedButton(
               onPressed: loading ? null : onContinue,
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2563EB),
-                disabledBackgroundColor: const Color(0xFF2563EB).withAlpha(100),
+                backgroundColor: const Color(0xFF1A6BE0),
+                disabledBackgroundColor: const Color(0xFF1A6BE0).withAlpha(100),
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                shadowColor: const Color(0xFF2563EB).withAlpha(100),
               ),
               child: loading
                   ? const SizedBox(

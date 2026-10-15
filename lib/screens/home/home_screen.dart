@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
@@ -64,25 +63,20 @@ class _GlassHomeAppBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withAlpha(12),
-            border: Border(bottom: BorderSide(color: Colors.white.withAlpha(20))),
-          ),
-          child: SafeArea(
-            bottom: false,
-            child: Column(
-              children: [
-                // Title row
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
-                  child: Row(
-                    children: [
-                      // ZCHAT brand lockup (Z symbol + typographic wordmark)
-                      const ZBrandLockup(symbolSize: 34, fontSize: 22),
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C1628).withAlpha(245),
+        border: Border(bottom: BorderSide(color: Colors.white.withAlpha(16))),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
+              child: Row(
+                children: [
+                  const ZBrandLockup(symbolSize: 34, fontSize: 22),
                       const Spacer(),
                       // Search only applies to the Chats tab — hide it elsewhere
                       // so it isn't a dead affordance on Status/Calls.
@@ -102,7 +96,7 @@ class _GlassHomeAppBar extends StatelessWidget {
                       ),
                       PopupMenuButton<String>(
                         icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-                        color: const Color(0xFF0A1A4A),
+                        color: const Color(0xFF121C2E),
                         onSelected: (v) {
                           if (v == 'profile')     context.push('/profile');
                           if (v == 'new_group')   context.push('/new-group');
@@ -164,9 +158,7 @@ class _GlassHomeAppBar extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
-    );
+        );
   }
 }
 
@@ -183,8 +175,8 @@ class _HomeFabState extends State<_HomeFab> {
     final icons  = [Icons.edit_rounded, Icons.camera_alt_rounded, Icons.add_call];
     final routes = ['/new-chat', '/status', '/calls'];
     return FloatingActionButton(
-      backgroundColor: const Color(0xFF2563EB),
-      elevation: 8,
+      backgroundColor: const Color(0xFF1A6BE0),
+      elevation: 2,
       onPressed: () => context.push(routes[tab]),
       child: Icon(icons[tab], color: Colors.white),
     );
@@ -442,38 +434,17 @@ class _AiAssistantTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [const Color(0xFF7C3AED).withAlpha(34), Colors.transparent],
-          ),
           border: Border(bottom: BorderSide(color: Colors.white.withAlpha(16))),
         ),
         child: Row(children: [
-          // Avatar with soft glow + online dot
-          Stack(children: [
-            Container(
-              width: 52, height: 52,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft, end: Alignment.bottomRight,
-                  colors: [Color(0xFF7C3AED), Color(0xFF4F8AFF)],
-                ),
-                boxShadow: [BoxShadow(color: const Color(0xFF7C3AED).withAlpha(120), blurRadius: 14, spreadRadius: 1)],
-              ),
-              child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 25),
+          Container(
+            width: 52, height: 52,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0xFF1A6BE0),
             ),
-            Positioned(
-              right: 0, bottom: 0,
-              child: Container(
-                width: 15, height: 15,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF22C55E),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF0A1330), width: 2.5),
-                ),
-              ),
-            ),
-          ]),
+            child: const Icon(Icons.smart_toy_outlined, color: Colors.white, size: 24),
+          ),
           const SizedBox(width: 13),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -481,14 +452,11 @@ class _AiAssistantTile extends StatelessWidget {
                 maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontFamily: kBrandFont, fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.3)),
               const SizedBox(height: 3),
-              Text('Your AI assistant · ask me anything',
+              Text('Study help and campus questions',
                   maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12.5, color: Colors.white.withAlpha(160), height: 1.2)),
             ]),
           ),
-          const SizedBox(width: 8),
-          Icon(Icons.push_pin_rounded, size: 15, color: Colors.white.withAlpha(70)),
-          const SizedBox(width: 6),
           Icon(Icons.chevron_right_rounded, color: Colors.white.withAlpha(90)),
         ]),
       ),

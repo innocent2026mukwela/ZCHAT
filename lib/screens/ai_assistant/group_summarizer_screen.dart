@@ -54,7 +54,7 @@ class _GroupSummarizerScreenState extends State<GroupSummarizerScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errors[chatId] = e.toString().replaceFirst('Exception: ', '');
+          _errors[chatId] = AiService.friendlyError(e);
           _loading[chatId] = false;
         });
       }
@@ -99,7 +99,7 @@ class _GroupSummarizerScreenState extends State<GroupSummarizerScreen> {
               const Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('Group Summarizer', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-                  Text('Catch up instantly with AI', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                  Text('Summarize recent group messages', style: TextStyle(color: Colors.white54, fontSize: 11)),
                 ]),
               ),
               const Icon(Icons.groups_rounded, color: Color(0xFF14B8A6)),

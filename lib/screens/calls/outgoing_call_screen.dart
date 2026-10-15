@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import '../../config.dart';
 import '../../services/call_service.dart';
 import '../../services/zego_service.dart';
 import '../../utils/glass.dart';
@@ -145,6 +146,17 @@ class _OutgoingCallScreenState extends State<OutgoingCallScreen>
           ],
         ),
       );
+      await _cancelCall();
+      return;
+    }
+
+    if (!AppConfig.zegoConfigured) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Calls are not configured. Set ZEGO_APP_ID and ZEGO_APP_SIGN.'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
       await _cancelCall();
       return;
     }

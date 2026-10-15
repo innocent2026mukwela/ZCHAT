@@ -12,6 +12,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/ai_service.dart';
 import '../../utils/glass.dart';
+import '../../widgets/ai_backend_required.dart';
 import '../../widgets/ai_markdown.dart';
 import '../../widgets/bottom_nav_bar.dart';
 import '../../widgets/voice_input_button.dart';
@@ -38,6 +39,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
   bool _loading    = false;
   bool _hasText    = false;
   bool _loadingHistory = false;
+  bool _probingBackend = true;
+  bool _backendOk = true;
   int? _speakingIdx;
   String? _course; // null = General mode
   String? _conversationId;
@@ -45,7 +48,8 @@ class _AiChatScreenState extends State<AiChatScreen> {
   String _pendingImageMime = 'image/jpeg';
   final List<String> _courses = [];
 
-  bool get _canSend => (_hasText || _pendingImageBytes != null) && !_loading;
+  bool get _canSend =>
+      (_hasText || _pendingImageBytes != null) && !_loading && _backendOk;
 
   final List<_Msg> _messages = [];
 
@@ -81,6 +85,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
     final imageBytes = _pendingImageBytes;
     final imageMime = _pendingImageMime;
     if (trimmed.isEmpty && imageBytes == null) return;
+    if (!_backendOk) {
+      setState(() => _messages.add(_Msg(
+        text: AiService.backendRequiredMessage, isAi: true)));
+      return;
+    }
 
     // Build this turn's content: an image (base64) + optional caption, else text.
     dynamic outgoingContent = trimmed;
@@ -150,14 +159,23 @@ class _AiChatScreenState extends State<AiChatScreen> {
       }
     } catch (e) {
       if (!mounted) return;
+      if (AiService.isConnectivityFailure(e)) {
+        _backendOk = false;
+      }
       setState(() {
-        final m = _Msg(text: e.toString().replaceFirst('Exception: ', ''), isAi: true);
+        final m = _Msg(text: AiService.friendlyError(e), isAi: true);
         if (aiIdx == null) { _messages.add(m); } else { _messages[aiIdx!] = m; }
       });
     } finally {
       if (mounted) setState(() => _loading = false);
     }
     _scrollDown();
+  }
+
+  Future<void> _probeBackend({bool force = false}) async {
+    setState(() => _probingBackend = true);
+    final ok = await AiService.isBackendReachable(force: force);
+    if (mounted) setState(() { _backendOk = ok; _probingBackend = false; });
   }
 
   // Primary-assistant conversation id is remembered per user so the pinned
@@ -184,6 +202,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     super.initState();
     _initTts();
     _loadCourses();
+    _probeBackend();
     if (widget.conversationId != null) {
       _loadConversation(widget.conversationId!);
     } else if (widget.pinned) {
@@ -213,7 +232,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _loadingHistory = false);
-        _messages.add(_Msg(text: 'Could not load conversation history.', isAi: true));
+        _messages.add(_Msg(
+          text: AiService.isConnectivityFailure(e)
+              ? AiService.backendRequiredMessage
+              : 'Could not load conversation history.',
+          isAi: true,
+        ));
+        if (AiService.isConnectivityFailure(e)) _backendOk = false;
       }
     }
   }
@@ -355,6 +380,42 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_probingBackend) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        bottomNavigationBar: const AppBottomNavBar(),
+        body: Container(
+          decoration: const BoxDecoration(gradient: kBgGradient),
+          child: const Center(
+            child: CircularProgressIndicator(color: Color(0xFF4F8AFF), strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (!_backendOk) {
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        bottomNavigationBar: const AppBottomNavBar(),
+        body: Container(
+          decoration: const BoxDecoration(gradient: kBgGradient),
+          child: SafeArea(
+            child: Column(children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                  onPressed: () => context.canPop() ? context.pop() : context.go('/ai'),
+                ),
+              ),
+              Expanded(child: AiBackendRequiredView(
+                onRetry: () => _probeBackend(force: true),
+              )),
+            ]),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,

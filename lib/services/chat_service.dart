@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import '../utils/storage_errors.dart';
 import 'ai_service.dart';
 import 'encryption_service.dart';
 
@@ -177,6 +178,7 @@ class ChatService {
       final members = List<String>.from(chatSnap['members'] as List);
       for (final uid in members) {
         if (uid != _myUid) {
+          // AiService.sendNotification respects recipient notifMessages.
           AiService.sendNotification(
             recipientUid: uid,
             title: senderName,
@@ -319,7 +321,11 @@ class ChatService {
     final ext  = imageFile.path.split('.').last;
     final path = 'chat_images/$chatId/${DateTime.now().millisecondsSinceEpoch}.$ext';
     final ref  = _storage.ref().child(path);
-    await ref.putFile(imageFile);
+    try {
+      await ref.putFile(imageFile);
+    } catch (e) {
+      throw Exception(friendlyStorageError(e));
+    }
     final url  = await ref.getDownloadURL();
     await sendMessage(chatId, caption.isNotEmpty ? caption : '📷 Photo',
         type: 'image', imageUrl: url, viewOnce: viewOnce);

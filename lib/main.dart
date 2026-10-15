@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -10,6 +11,7 @@ import 'services/fcm_service.dart';
 import 'services/planner_service.dart';
 import 'services/voice_assistant_service.dart';
 import 'services/zego_service.dart';
+import 'config.dart';
 import 'utils/theme.dart';
 import 'router.dart';
 import 'screens/calls/incoming_call_screen.dart';
@@ -17,6 +19,7 @@ import 'widgets/voice_assistant_overlay.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  AppConfig.validateAtStartup();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await FcmService.init();
   await initLocalNotifications();
@@ -67,12 +70,21 @@ class _UnZAzChatAppState extends State<UnZAzChatApp> {
     super.dispose();
   }
 
-  void _onIncomingCall(Map<String, dynamic>? data) {
+  Future<void> _onIncomingCall(Map<String, dynamic>? data) async {
     if (data == null) {
       _callScreenShowing = false;
       return;
     }
     if (_callScreenShowing) return;
+
+    // Honour profile → Notifications → Calls before presenting the ring UI.
+    final me = FirebaseAuth.instance.currentUser;
+    if (me != null) {
+      try {
+        final doc = await FirebaseFirestore.instance.collection('users').doc(me.uid).get();
+        if ((doc.data()?['notifCalls'] as bool?) == false) return;
+      } catch (_) {}
+    }
 
     final nav = appNavigatorKey.currentState;
     if (nav == null) return;

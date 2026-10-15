@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import '../../config.dart';
 import '../../services/zego_service.dart';
 import '../../utils/glass.dart';
 
@@ -32,6 +33,12 @@ class _LiveSessionScreenState extends State<LiveSessionScreen> {
   Future<void> _prepare() async {
     if (kIsWeb) {
       setState(() => _error = 'Live sessions run on the mobile app (video calling is not supported on web).');
+      return;
+    }
+
+    if (!AppConfig.zegoConfigured) {
+      setState(() => _error =
+          'Live sessions are not configured. Set ZEGO_APP_ID and ZEGO_APP_SIGN via --dart-define.');
       return;
     }
 

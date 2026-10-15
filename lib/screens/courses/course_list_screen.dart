@@ -262,6 +262,12 @@ class _CourseCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             _ActionBtn(
+              icon: Icons.videocam_outlined,
+              color: const Color(0xFF4F8AFF),
+              onTap: () => context.push('/classroom/${Uri.encodeComponent(c.code)}'),
+            ),
+            const SizedBox(height: 6),
+            _ActionBtn(
               icon: Icons.psychology_alt_outlined,
               color: const Color(0xFFB794F4),
               onTap: () => context.push('/ai/quiz/${Uri.encodeComponent(c.code)}'),

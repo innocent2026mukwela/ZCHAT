@@ -111,11 +111,11 @@ class _ClassroomBody extends StatelessWidget {
                     Row(children: [
                       _StatCard('${sessions.length}', 'Sessions', Icons.cast_for_education_outlined, const Color(0xFF4F8AFF)),
                       const SizedBox(width: 8),
-                      _StatCard('${assigns.length}', 'Assignments', Icons.assignment_outlined, const Color(0xFFB794F4)),
+                      _StatCard('${assigns.length}', 'Assignments', Icons.assignment_outlined, const Color(0xFF5B9BFF)),
                       const SizedBox(width: 8),
-                      _StatCard('$enrolled', 'Students', Icons.group_outlined, const Color(0xFF86EFAC)),
+                      _StatCard('$enrolled', 'Students', Icons.group_outlined, const Color(0xFF4ADE80)),
                       const SizedBox(width: 8),
-                      _StatCard(avgScore != null ? '${avgScore.toStringAsFixed(0)}%' : 'N/A', 'Avg Score', Icons.bar_chart_rounded, const Color(0xFFFBBF24)),
+                      _StatCard(avgScore != null ? '${avgScore.toStringAsFixed(0)}%' : 'N/A', 'Avg Score', Icons.bar_chart_rounded, const Color(0xFFE6A23C)),
                     ]).animate().fadeIn(),
 
                     const SizedBox(height: 16),
@@ -136,7 +136,7 @@ class _ClassroomBody extends StatelessWidget {
                         const SizedBox(width: 14),
                         const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                           Text('Start Live Session', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
-                          Text('Students notified instantly', style: TextStyle(color: Colors.white60, fontSize: 12)),
+                          Text('Opens a live room for this course', style: TextStyle(color: Colors.white60, fontSize: 12)),
                         ])),
                         ElevatedButton(
                           onPressed: () async {
@@ -340,7 +340,13 @@ class _MoreMenu extends StatelessWidget {
                       .collection('courses').doc(courseId)
                       .collection('sessions')
                       .add({'title': title, 'scheduledAt': Timestamp.fromDate(picked), 'status': 'scheduled', 'roomId': '${courseId}_${picked.millisecondsSinceEpoch}'});
-                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Session scheduled. Students will see it in this classroom list.'),
+                      behavior: SnackBarBehavior.floating,
+                    ));
+                  }
                 } catch (e) {
                   if (ctx.mounted) {
                     ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(

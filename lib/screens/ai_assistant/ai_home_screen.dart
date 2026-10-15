@@ -3,7 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
+import '../../services/ai_service.dart';
 import '../../utils/glass.dart';
+import '../../widgets/ai_backend_required.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
 /// "ZChat AI" hub — entry point for all AI academic-assistant features.
@@ -16,23 +18,42 @@ class AiHomeScreen extends StatefulWidget {
 }
 
 class _AiHomeScreenState extends State<AiHomeScreen> {
+  bool _probing = true;
+  bool _backendOk = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _probe();
+  }
+
+  Future<void> _probe({bool force = false}) async {
+    setState(() => _probing = true);
+    final ok = await AiService.isBackendReachable(force: force);
+    if (mounted) setState(() { _backendOk = ok; _probing = false; });
+  }
+
   @override
   Widget build(BuildContext context) {
     return GradientScaffold(
       safeArea: true,
       bottomNavigationBar: const AppBottomNavBar(),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: [
-          _buildHeader(),
-          const SizedBox(height: 20),
-          _buildNewChatButton(context),
-          const SizedBox(height: 24),
-          _buildSectionTitle('Tools'),
-          const SizedBox(height: 12),
-          _buildToolsGrid(context),
-        ],
-      ),
+      body: _probing
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF4F8AFF), strokeWidth: 2))
+          : !_backendOk
+              ? AiBackendRequiredView(onRetry: () => _probe(force: true))
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  children: [
+                    _buildHeader(),
+                    const SizedBox(height: 20),
+                    _buildNewChatButton(context),
+                    const SizedBox(height: 24),
+                    _buildSectionTitle('Tools'),
+                    const SizedBox(height: 12),
+                    _buildToolsGrid(context),
+                  ],
+                ),
     );
   }
 
@@ -47,8 +68,8 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
     return GestureDetector(
       onTap: () => context.push('/ai/chat'),
       child: GlassCard(
-        borderRadius: BorderRadius.circular(18),
-        bgColor: const Color(0xFF7C3AED),
+        borderRadius: BorderRadius.circular(12),
+        bgColor: const Color(0xFF1A6BE0),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
         child: Row(children: [
           Container(
@@ -140,7 +161,7 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
 
   Widget _buildToolsGrid(BuildContext context) {
     final tools = [
-      _Tool('AI Chat', 'Ask questions & get help', Icons.smart_toy_rounded, const Color(0xFF7C3AED),
+      _Tool('AI Chat', 'Ask questions & get help', Icons.smart_toy_rounded, const Color(0xFF1A6BE0),
           () => context.push('/ai/chat')),
       _Tool('Practice Quiz', 'Test yourself with MCQs', Icons.quiz_rounded, const Color(0xFF2563EB),
           () => _pickCourseThen((c) => '/ai/quiz/$c')),
@@ -148,13 +169,13 @@ class _AiHomeScreenState extends State<AiHomeScreen> {
           () => _pickCourseThen((c) => '/ai/summaries/$c')),
       _Tool('Past Papers', 'Browse & practice', Icons.description_rounded, const Color(0xFF16A34A),
           () => context.push('/courses')),
-      _Tool('AI Practice', 'Timed AI practice', Icons.timer_rounded, const Color(0xFFF59E0B),
+      _Tool('AI Practice', 'Timed AI practice', Icons.timer_rounded, const Color(0xFFD97706),
           () => _pickCourseThen((c) => '/exam-simulator/$c')),
-      _Tool('Study Planner', 'AI-personalised plans', Icons.event_note_rounded, const Color(0xFFEC4899),
+      _Tool('Study Planner', 'AI-personalised plans', Icons.event_note_rounded, const Color(0xFF0D9488),
           () => _pickCourseThen((c) => '/adaptive-plan/$c')),
       _Tool('Group Summarizer', 'Catch up on group chats', Icons.groups_rounded, const Color(0xFF14B8A6),
           () => context.push('/ai/group-summarizer')),
-      _Tool('Study Insights', 'Personalised recommendations', Icons.insights_rounded, const Color(0xFF8B5CF6),
+      _Tool('Study Insights', 'Personalised recommendations', Icons.insights_rounded, const Color(0xFF3D7DD6),
           () => context.push('/ai/insights')),
     ];
 

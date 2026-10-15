@@ -95,11 +95,24 @@ final appRouter = GoRouter(
       builder: (c, s) => ExamSimulatorScreen(
         courseId: s.pathParameters['courseId']!,
         paperTitle: s.uri.queryParameters['paper'] ?? 'Past Paper',
+        paperId: s.uri.queryParameters['paperId'],
       ),
     ),
     GoRoute(
       path: '/adaptive-plan/:courseId',
-      builder: (c, s) => AdaptiveLearningPathScreen(courseId: s.pathParameters['courseId']!),
+      builder: (c, s) {
+        final extra = s.extra;
+        List<String> weakTopics = const [];
+        if (extra is List) {
+          weakTopics = extra.map((e) => e.toString()).toList();
+        } else if (extra is Map && extra['weakTopics'] is List) {
+          weakTopics = (extra['weakTopics'] as List).map((e) => e.toString()).toList();
+        }
+        return AdaptiveLearningPathScreen(
+          courseId: s.pathParameters['courseId']!,
+          weakTopics: weakTopics,
+        );
+      },
     ),
 
     // Classroom

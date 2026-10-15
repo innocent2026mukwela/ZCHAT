@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pinput/pinput.dart';
+import '../../config.dart';
 import '../../services/auth_service.dart';
 import '../../services/two_step_service.dart';
 import '../../services/zego_service.dart';
@@ -22,11 +23,16 @@ class _OtpScreenState extends State<OtpScreen> {
   bool _loading        = false;
   bool _resending      = false;
   String? _error;
+  String? _demoOtp;
   int _secondsLeft     = 60;
   Timer? _timer;
 
   @override
-  void initState() { super.initState(); _startCountdown(); }
+  void initState() {
+    super.initState();
+    _demoOtp = AuthService.lastDemoOtp;
+    _startCountdown();
+  }
 
   @override
   void dispose() { _timer?.cancel(); _pinController.dispose(); _focusNode.dispose(); super.dispose(); }
@@ -47,7 +53,11 @@ class _OtpScreenState extends State<OtpScreen> {
       final result = await AuthService.verifyOtp(widget.phoneNumber, otp);
       // Zego is call infrastructure — never let its init failure (web, no
       // network, bad creds) block an otherwise-valid login.
-      try { await ZegoService.init(); } catch (_) {}
+      try {
+        await ZegoService.init();
+      } catch (e) {
+        debugPrint('[OtpScreen] Zego init skipped: $e');
+      }
       if (!mounted) return;
 
       // Two-step verification: if user has a PIN, require it before entry
@@ -61,7 +71,15 @@ class _OtpScreenState extends State<OtpScreen> {
         }
       }
       if (!mounted) return;
-      context.go(result['needsProfile'] == true ? '/profile-setup' : '/home');
+      if (result['needsProfile'] == true) {
+        context.go('/profile-setup');
+        return;
+      }
+      // Route lecturers to their home — do not dump them on the student shell.
+      final me = await AuthService.getMe();
+      if (!mounted) return;
+      final role = me?['role'] as String?;
+      context.go(role == 'lecturer' ? '/lecturer/home' : '/home');
     } catch (e) {
       setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _pinController.clear(); });
       _focusNode.requestFocus();
@@ -110,7 +128,20 @@ class _OtpScreenState extends State<OtpScreen> {
   Future<void> _resend() async {
     setState(() { _resending = true; _error = null; });
     try {
-      await AuthService.sendOtp(widget.phoneNumber);
+      final demoOtp = await AuthService.sendOtp(widget.phoneNumber);
+      if (mounted) {
+        setState(() => _demoOtp = demoOtp ?? AuthService.lastDemoOtp);
+        if (AppConfig.demoAuth && _demoOtp != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Demo OTP: $_demoOtp  ·  any 6-digit code works'),
+              backgroundColor: const Color(0xFF1A6BE0),
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 6),
+            ),
+          );
+        }
+      }
       _startCountdown(); _pinController.clear(); _focusNode.requestFocus();
     } catch (e) {
       setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
@@ -147,6 +178,7 @@ class _OtpScreenState extends State<OtpScreen> {
             SafeArea(
               child: Column(
                 children: [
+                  if (AppConfig.demoAuth) const _DemoModeBanner(),
                   // Back button
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -196,6 +228,41 @@ class _OtpScreenState extends State<OtpScreen> {
                               ],
                             ),
                           ).animate(delay: 160.ms).fadeIn(),
+
+                          if (AppConfig.demoAuth && _demoOtp != null) ...[
+                            const SizedBox(height: 20),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE6A817).withAlpha(40),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFFE6A817).withAlpha(160)),
+                              ),
+                              child: Column(
+                                children: [
+                                  Text(
+                                    'Demo OTP: $_demoOtp',
+                                    style: const TextStyle(
+                                      color: Color(0xFFFFE08A),
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 2,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Demo mode: any 6-digit code works',
+                                    style: TextStyle(
+                                      color: Colors.white.withAlpha(180),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ).animate(delay: 180.ms).fadeIn(),
+                          ],
 
                           const SizedBox(height: 44),
 
@@ -292,6 +359,38 @@ class _OtpScreenState extends State<OtpScreen> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DemoModeBanner extends StatelessWidget {
+  const _DemoModeBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFE6A817),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.science_outlined, size: 16, color: Color(0xFF1A1200)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'DEMO MODE — OTP is local; no backend required. '
+                'Disable with --dart-define=DEMO_AUTH=false',
+                style: TextStyle(
+                  color: const Color(0xFF1A1200).withAlpha(230),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  height: 1.3,
+                ),
               ),
             ),
           ],

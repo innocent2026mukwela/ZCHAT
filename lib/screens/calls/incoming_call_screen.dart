@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import '../../config.dart';
 import '../../services/call_service.dart';
 import '../../services/zego_service.dart';
 import '../../utils/glass.dart';
@@ -107,6 +108,16 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
     await CallService.answerCall(widget.callId);
 
     if (!mounted) return;
+
+    if (!AppConfig.zegoConfigured) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Calls are not configured. Set ZEGO_APP_ID and ZEGO_APP_SIGN.'),
+        behavior: SnackBarBehavior.floating,
+      ));
+      Navigator.of(context).pop();
+      return;
+    }
+
     final me = FirebaseAuth.instance.currentUser!;
     Navigator.of(context).pushReplacement(MaterialPageRoute(
       builder: (_) => ZegoUIKitPrebuiltCall(

@@ -20,7 +20,7 @@ class _SplashScreenState extends State<SplashScreen>
     super.initState();
     _anim = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 900),
     )..forward();
     _checkAuth();
   }
@@ -32,20 +32,17 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _checkAuth() async {
-    // Wait for animation to feel natural
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(const Duration(milliseconds: 1600));
     if (!mounted) return;
 
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
-      // Not logged in → go to login
       context.go('/login');
       return;
     }
 
-    // Logged in → check if profile is complete. (Contacts permission is now
-    // requested contextually, in New Chat / Status, not eagerly here.)
+    // Contacts permission is requested contextually (New Chat / Status), not here.
     try {
       final doc = await FirebaseFirestore.instance
           .collection('users')
@@ -64,8 +61,9 @@ class _SplashScreenState extends State<SplashScreen>
       } else {
         context.go('/home');
       }
-    } catch (_) {
+    } catch (e, st) {
       // Offline / read failed — don't hang forever on the splash; enter the app.
+      debugPrint('[Splash] profile check failed: $e\n$st');
       if (mounted) context.go('/home');
     }
   }
@@ -73,58 +71,53 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF06112B),
+      backgroundColor: const Color(0xFF070D18),
       body: Container(
         width: double.infinity,
         height: double.infinity,
         decoration: const BoxDecoration(gradient: kBgGradient),
-        child: Stack(
-          children: [
-            const GlowOrbs(),
-            Center(
-              child: AnimatedBuilder(
-                animation: _anim,
-                builder: (_, _) {
-                  final opacity = Curves.easeOut.transform(_anim.value);
-                  final scale   = 0.85 + 0.15 * Curves.elasticOut.transform(_anim.value);
-                  return Opacity(
-                    opacity: opacity,
-                    child: Transform.scale(
-                      scale: scale,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Image.asset(
-                            'assets/icons/zchat_logo_cutout.png',
-                            width: 200,
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, _, _) => const Text(
-                              'ZCHAT',
-                              style: TextStyle(
-                                color: Color(0xFF2EA3FF),
-                                fontSize: 48,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: -1,
-                              ),
-                            ),
+        child: Center(
+          child: AnimatedBuilder(
+            animation: _anim,
+            builder: (_, _) {
+              final t = Curves.easeOutCubic.transform(_anim.value);
+              return Opacity(
+                opacity: t,
+                child: Transform.translate(
+                  offset: Offset(0, 10 * (1 - t)),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Image.asset(
+                        'assets/icons/zchat_logo_cutout.png',
+                        width: 180,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, _, _) => const Text(
+                          'ZCHAT',
+                          style: TextStyle(
+                            fontFamily: kBrandFont,
+                            color: Color(0xFF5B9BFF),
+                            fontSize: 42,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1,
                           ),
-                          const SizedBox(height: 32),
-                          SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.5,
-                              color: Colors.white.withAlpha(120),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
+                      const SizedBox(height: 28),
+                      SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white.withAlpha(100),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
         ),
       ),
     );

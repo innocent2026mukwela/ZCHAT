@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -6,6 +8,9 @@ import '../config.dart';
 
 /// Handles authentication via the ZCHAT backend's OTP endpoints, bridging
 /// into Firebase Auth with a custom token.
+///
+/// When [AppConfig.demoAuth] is true, OTP is generated locally (no Node
+/// backend) and sign-in uses Firebase Anonymous Auth + a Firestore profile.
 /// 10.0.2.2 = Android emulator loopback to host machine.
 /// For a physical device on the same Wi-Fi, use your machine's LAN IP.
 class AuthService {
@@ -13,6 +18,11 @@ class AuthService {
 
   static final _auth = FirebaseAuth.instance;
   static final _db   = FirebaseFirestore.instance;
+  static final _rng  = Random();
+
+  /// Last OTP generated in demo mode (for UI display). Null outside demo.
+  static String? lastDemoOtp;
+  static String? _demoPhone;
 
   // ── Current user ──────────────────────────────────────────────────────────
 
@@ -22,7 +32,19 @@ class AuthService {
 
   // ── Send OTP ──────────────────────────────────────────────────────────────
 
-  static Future<void> sendOtp(String phoneNumber) async {
+  /// Sends (or in demo mode, generates) an OTP for [phoneNumber].
+  /// Returns the demo OTP string when [AppConfig.demoAuth] is true; otherwise null.
+  static Future<String?> sendOtp(String phoneNumber) async {
+    if (AppConfig.demoAuth) {
+      lastDemoOtp = _generateDemoOtp();
+      _demoPhone = phoneNumber;
+      debugPrint('[AuthService] Demo OTP for $phoneNumber: $lastDemoOtp');
+      return lastDemoOtp;
+    }
+
+    lastDemoOtp = null;
+    _demoPhone = null;
+
     final res = await http.post(
       Uri.parse('$_baseUrl/send-otp'),
       headers: {'Content-Type': 'application/json'},
@@ -32,12 +54,17 @@ class AuthService {
     if (res.statusCode != 200) {
       throw Exception(_errorMessage(res));
     }
+    return null;
   }
 
   // ── Verify OTP ────────────────────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> verifyOtp(
       String phoneNumber, String otp) async {
+    if (AppConfig.demoAuth) {
+      return _verifyDemoOtp(phoneNumber, otp);
+    }
+
     final res = await http.post(
       Uri.parse('$_baseUrl/verify-otp'),
       headers: {'Content-Type': 'application/json'},
@@ -67,6 +94,48 @@ class AuthService {
     };
   }
 
+  /// Demo path: any 6-digit code works. Signs in anonymously and writes a
+  /// demo user profile so the rest of the app can use [currentUser].
+  static Future<Map<String, dynamic>> _verifyDemoOtp(
+      String phoneNumber, String otp) async {
+    if (!RegExp(r'^\d{6}$').hasMatch(otp)) {
+      throw Exception('Enter a 6-digit code.');
+    }
+
+    try {
+      await _auth.signInAnonymously();
+    } on FirebaseAuthException catch (e) {
+      throw Exception(
+        'Demo sign-in failed (${e.code}). '
+        'Enable Anonymous sign-in in the Firebase Console '
+        '(Authentication → Sign-in method → Anonymous).',
+      );
+    }
+
+    final uid = _auth.currentUser!.uid;
+    final phone = phoneNumber.isNotEmpty ? phoneNumber : (_demoPhone ?? '');
+
+    final existing = await _db.collection('users').doc(uid).get();
+    final existingData = existing.data();
+    final needsProfile = existingData?['profileComplete'] != true;
+
+    await _db.collection('users').doc(uid).set({
+      'phoneNumber': phone,
+      'demo': true,
+      'fullName': existingData?['fullName'] ?? 'Demo User',
+      if (!existing.exists) 'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    return {
+      'uid': uid,
+      'needsProfile': needsProfile,
+    };
+  }
+
+  static String _generateDemoOtp() =>
+      (_rng.nextInt(900000) + 100000).toString();
+
   // ── Complete profile ──────────────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> completeProfile({
@@ -95,12 +164,19 @@ class AuthService {
       'department':      department,
       'lecturerEmail':   lecturerEmail,
       'profileComplete': true,
+      // Keep demo profiles discoverable for New Chat peer list / search.
+      if (AppConfig.demoAuth) 'demo': true,
       'createdAt':       FieldValue.serverTimestamp(),
       'updatedAt':       FieldValue.serverTimestamp(),
     };
 
     await _db.collection('users').doc(user.uid).set(data, SetOptions(merge: true));
-    try { await user.updateDisplayName(fullName); } catch (_) {}
+    try {
+      await user.updateDisplayName(fullName);
+    } catch (e) {
+      // Profile doc is the source of truth; Auth displayName is best-effort.
+      debugPrint('[AuthService] updateDisplayName failed: $e');
+    }
     return data;
   }
 
@@ -117,6 +193,8 @@ class AuthService {
   // ── Logout ────────────────────────────────────────────────────────────────
 
   static Future<void> logout() async {
+    lastDemoOtp = null;
+    _demoPhone = null;
     await _auth.signOut();
   }
 

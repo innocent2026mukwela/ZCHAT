@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import '../../config.dart';
 import '../../services/ai_service.dart';
 import '../../services/zego_service.dart';
 import '../../utils/glass.dart';
@@ -127,7 +127,7 @@ class _LecturerHomeScreenState extends State<LecturerHomeScreen> {
                   child: Row(children: [
                     CircleAvatar(
                       radius: 25,
-                      backgroundColor: isGroup ? const Color(0xFF00695C) : const Color(0xFF6A1B9A),
+                      backgroundColor: isGroup ? const Color(0xFF1B5E4A) : const Color(0xFF1A4A8A),
                       child: Icon(isGroup ? Icons.groups_rounded : Icons.person_rounded, color: Colors.white, size: 22),
                     ),
                     const SizedBox(width: 12),
@@ -193,8 +193,8 @@ class _LecturerCoursesScreenState extends State<LecturerCoursesScreen> {
               }).toList());
 
   static const _palette = [
-    Color(0xFF2563EB), Color(0xFF00695C), Color(0xFF6A1B9A),
-    Color(0xFFAD1457), Color(0xFFE65100), Color(0xFF4527A0),
+    Color(0xFF2563EB), Color(0xFF1B5E4A), Color(0xFF1A4A8A),
+    Color(0xFFB45309), Color(0xFF0E7490), Color(0xFF334155),
   ];
 
   Color _courseColor(String id) =>
@@ -392,15 +392,19 @@ class LecturerClassroomScreen extends StatelessWidget {
           _LiveClassCard(),
           const SizedBox(height: 14),
           _ActionGrid(actions: [
-            _LecturerAction(Icons.present_to_all_rounded, 'Share screen', 'Mirror slides or demos', onTap: () => context.push('/courses')),
-            _LecturerAction(Icons.fiber_manual_record_rounded, 'Record', 'Save session replay', onTap: () {
+            _LecturerAction(Icons.qr_code_2_rounded, 'Attendance', 'Generate class QR code',
+                onTap: () => _showAttendanceQr(context)),
+            _LecturerAction(Icons.upload_file_rounded, 'Resources', 'Open your courses',
+                onTap: () => context.push('/courses')),
+            _LecturerAction(Icons.cast_for_education_rounded, 'Live class', 'Start from the card above',
+                onTap: () {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text('Recording starts automatically when you begin a live session.'),
-                backgroundColor: Color(0xFF2563EB), behavior: SnackBarBehavior.floating,
+                content: Text('Use “Start Class” above to open a live room.'),
+                backgroundColor: Color(0xFF1A6BE0), behavior: SnackBarBehavior.floating,
               ));
             }),
-            _LecturerAction(Icons.qr_code_2_rounded, 'Attendance', 'Generate class code', onTap: () => _showAttendanceQr(context)),
-            _LecturerAction(Icons.upload_file_rounded, 'Resources', 'Send files to class', onTap: () => context.push('/courses')),
+            _LecturerAction(Icons.menu_book_rounded, 'Course list', 'Manage enrolled courses',
+                onTap: () => context.push('/courses')),
           ]),
         ],
       ),
@@ -424,10 +428,14 @@ class LecturerAiScreen extends StatelessWidget {
           const _AiPromptCard(),
           const SizedBox(height: 14),
           _ActionGrid(actions: [
-            _LecturerAction(Icons.quiz_outlined, 'Generate quiz', 'From topic or notes', onTap: () => context.push('/ai')),
-            _LecturerAction(Icons.grading_rounded, 'Grade help', 'Rubric-based feedback', onTap: () => context.push('/ai')),
-            _LecturerAction(Icons.summarize_outlined, 'Summarize', 'Class chat or PDFs', onTap: () => context.push('/ai')),
-            _LecturerAction(Icons.campaign_outlined, 'Announcement', 'Clean up message tone', onTap: () => context.push('/ai')),
+            _LecturerAction(Icons.chat_outlined, 'AI assistant', 'Ask course questions',
+                onTap: () => context.push('/ai/assistant')),
+            _LecturerAction(Icons.quiz_outlined, 'Practice quiz', 'Generate MCQs by topic',
+                onTap: () => context.push('/ai/quiz/General')),
+            _LecturerAction(Icons.summarize_outlined, 'Group summarizer', 'Catch up on chats',
+                onTap: () => context.push('/ai/group-summarizer')),
+            _LecturerAction(Icons.insights_outlined, 'Study insights', 'Usage recommendations',
+                onTap: () => context.push('/ai/insights')),
           ]),
         ],
       ),
@@ -538,29 +546,24 @@ class _LecturerAppBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withAlpha(12),
-            border: Border(bottom: BorderSide(color: Colors.white.withAlpha(20))),
-          ),
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-              child: Row(children: [
-                Image.asset(_brandAsset, width: 92, fit: BoxFit.contain,
-                  errorBuilder: (_, e, s) => const Text('ZCHAT',
-                    style: TextStyle(color: Color(0xFF2EA3FF), fontWeight: FontWeight.w900))),
-                const SizedBox(width: 10),
-                Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800))),
-                if (actions != null) ...actions!,
-              ]),
-            ),
-          ),
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C1628).withAlpha(245),
+        border: Border(bottom: BorderSide(color: Colors.white.withAlpha(16))),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+          child: Row(children: [
+            Image.asset(_brandAsset, width: 92, fit: BoxFit.contain,
+              errorBuilder: (_, e, s) => const Text('ZCHAT',
+                style: TextStyle(color: Color(0xFF5B9BFF), fontWeight: FontWeight.w800, fontFamily: kBrandFont))),
+            const SizedBox(width: 10),
+            Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700, fontFamily: kBrandFont))),
+            if (actions != null) ...actions!,
+          ]),
         ),
       ),
     );
@@ -620,16 +623,25 @@ class _LiveClassCard extends StatelessWidget {
         SizedBox(
           width: double.infinity, height: 48,
           child: ElevatedButton.icon(
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => ZegoUIKitPrebuiltCall(
-                appID: kZegoAppId,
-                appSign: kZegoAppSign,
-                userID: uid,
-                userName: 'Lecturer',
-                callID: roomId,
-                config: ZegoUIKitPrebuiltCallConfig.groupVideoCall(),
-              ),
-            )),
+            onPressed: () {
+              if (!AppConfig.zegoConfigured) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Live class needs ZEGO_APP_ID and ZEGO_APP_SIGN.'),
+                  behavior: SnackBarBehavior.floating,
+                ));
+                return;
+              }
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => ZegoUIKitPrebuiltCall(
+                  appID: kZegoAppId,
+                  appSign: kZegoAppSign,
+                  userID: uid,
+                  userName: 'Lecturer',
+                  callID: roomId,
+                  config: ZegoUIKitPrebuiltCallConfig.groupVideoCall(),
+                ),
+              ));
+            },
             icon: const Icon(Icons.play_arrow_rounded, color: Colors.white),
             label: const Text('Start Class', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
             style: ElevatedButton.styleFrom(

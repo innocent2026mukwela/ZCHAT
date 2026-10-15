@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/ai_service.dart';
 import '../../services/courses_service.dart';
 import '../../utils/glass.dart';
+import '../../widgets/ai_backend_required.dart';
 
 class QuizScreen extends StatefulWidget {
   final String courseId;
@@ -56,7 +57,7 @@ class _QuizScreenState extends State<QuizScreen> {
       }).where((q) => q.q.isNotEmpty && q.opts.length >= 2).toList();
       setState(() => _questions = questions);
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+      if (mounted) setState(() => _error = AiService.friendlyError(e));
     }
   }
 
@@ -123,6 +124,10 @@ class _QuizScreenState extends State<QuizScreen> {
 
   Widget _body() {
     if (_error != null) {
+      if (_error == AiService.backendRequiredMessage ||
+          AiService.isConnectivityFailure(_error!)) {
+        return AiBackendRequiredView(onRetry: _load, detail: _error);
+      }
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),

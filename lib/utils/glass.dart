@@ -1,17 +1,16 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 
-// ── Brand gradient (used as scaffold background everywhere) ───────────
+// ── Calm campus background (flat navy — no neon / purple sweep) ───────
 const kBgGradient = LinearGradient(
-  begin: Alignment.topLeft,
-  end: Alignment.bottomRight,
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
   colors: [
-    Color(0xFF03050F),
-    Color(0xFF06112B),
-    Color(0xFF091D55),
-    Color(0xFF0D3599),
+    Color(0xFF0A1220),
+    Color(0xFF0C1628),
+    Color(0xFF0E1A30),
   ],
-  stops: [0.0, 0.28, 0.62, 1.0],
+  stops: [0.0, 0.55, 1.0],
 );
 
 // ── Reusable gradient background scaffold ─────────────────────────────
@@ -63,37 +62,36 @@ class GlassCard extends StatelessWidget {
     required this.child,
     this.padding,
     this.borderRadius,
-    this.blurSigma = 16,
+    this.blurSigma = 0,
     this.borderColor,
     this.bgColor,
   });
 
   @override
   Widget build(BuildContext context) {
-    final br = borderRadius ?? BorderRadius.circular(20);
+    final br = borderRadius ?? BorderRadius.circular(12);
+    final surface = bgColor ?? const Color(0xFF152033);
+    final childBox = Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: br,
+        border: Border.all(
+          color: borderColor ?? Colors.white.withAlpha(22),
+          width: 1,
+        ),
+      ),
+      child: child,
+    );
+    // Prefer flat surfaces; optional light blur only when explicitly requested.
+    if (blurSigma <= 0) {
+      return ClipRRect(borderRadius: br, child: childBox);
+    }
     return ClipRRect(
       borderRadius: br,
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                bgColor ?? Colors.white.withAlpha(28),
-                bgColor?.withAlpha(10) ?? Colors.white.withAlpha(10),
-              ],
-            ),
-            borderRadius: br,
-            border: Border.all(
-              color: borderColor ?? Colors.white.withAlpha(45),
-              width: 1,
-            ),
-          ),
-          child: child,
-        ),
+        child: childBox,
       ),
     );
   }
@@ -123,25 +121,20 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: AppBar(
-          backgroundColor: Colors.white.withAlpha(15),
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: centerTitle,
-          leading: leading,
-          title: Text(title,
-            style: const TextStyle(fontFamily: kBrandFont, color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 0.2)),
-          iconTheme: const IconThemeData(color: Colors.white),
-          actions: actions,
-          bottom: bottom,
-          flexibleSpace: Container(
-            decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: Colors.white.withAlpha(20))),
-            ),
-          ),
+    return AppBar(
+      backgroundColor: const Color(0xFF0C1628).withAlpha(240),
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      centerTitle: centerTitle,
+      leading: leading,
+      title: Text(title,
+        style: const TextStyle(fontFamily: kBrandFont, color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 0.2)),
+      iconTheme: const IconThemeData(color: Colors.white),
+      actions: actions,
+      bottom: bottom,
+      flexibleSpace: Container(
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: Colors.white.withAlpha(16))),
         ),
       ),
     );
@@ -198,43 +191,12 @@ InputDecoration glassInputDecoration({
   );
 }
 
-// ── Glow orbs background ──────────────────────────────────────────────
+// ── Decorative orbs (disabled — kept as no-op so call sites stay stable) ──
 class GlowOrbs extends StatelessWidget {
   const GlowOrbs({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Positioned(
-          top: -120, right: -120,
-          child: Container(
-            width: 360, height: 360,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(colors: [
-                const Color(0xFF2563EB).withAlpha(55),
-                Colors.transparent,
-              ]),
-            ),
-          ),
-        ),
-        Positioned(
-          bottom: -90, left: -90,
-          child: Container(
-            width: 280, height: 280,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(colors: [
-                const Color(0xFF4F8AFF).withAlpha(35),
-                Colors.transparent,
-              ]),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 // ── Brand identity ────────────────────────────────────────────────────
@@ -302,10 +264,7 @@ class _FallbackZ extends StatelessWidget {
   );
 }
 
-/// A brand wordmark set in the outlined "double-struck" style — hollow letters
-/// with a blue gradient stroke (matched to the Z symbol) plus a soft glow. The
-/// text is always rendered in capitals. Only the [text] changes per surface
-/// (ZCHAT · ZFEED · ZCHAT AI); the treatment stays identical for uniformity.
+/// Solid brand wordmark — clean Space Grotesk, no glow / outline effects.
 class ZWordmark extends StatelessWidget {
   final double fontSize;
   final String text;
@@ -313,45 +272,21 @@ class ZWordmark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = text.toUpperCase();
-    final stroke = (fontSize * 0.05).clamp(1.4, 3.0);
-    final base = TextStyle(
-      fontFamily: kBrandFont,
-      fontSize: fontSize,
-      fontWeight: FontWeight.w700,
-      letterSpacing: fontSize * 0.06,
-      height: 1.0,
-    );
-
-    return Stack(children: [
-      // Soft blue glow behind the outline
-      Text(label,
-        style: base.copyWith(
-          foreground: Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = stroke
-            ..strokeJoin = StrokeJoin.round
-            ..color = const Color(0xFF3BA0FF)
-            ..maskFilter = MaskFilter.blur(BlurStyle.normal, fontSize * 0.14),
-        )),
-      // Crisp gradient outline on top
-      ShaderMask(
-        shaderCallback: (r) => kBrandBlue.createShader(r),
-        blendMode: BlendMode.srcIn,
-        child: Text(label,
-          style: base.copyWith(
-            foreground: Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = stroke
-              ..strokeJoin = StrokeJoin.round
-              ..color = Colors.white,
-          )),
+    return Text(
+      text.toUpperCase(),
+      style: TextStyle(
+        fontFamily: kBrandFont,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w700,
+        letterSpacing: fontSize * 0.04,
+        height: 1.0,
+        color: const Color(0xFF5B9BFF),
       ),
-    ]);
+    );
   }
 }
 
-/// A compact "AI" tag used to mark ZChat AI surfaces consistently.
+/// Compact "AI" tag — brand blue, no purple gradient.
 class ZAiTag extends StatelessWidget {
   final double fontSize;
   const ZAiTag({super.key, this.fontSize = 10});
@@ -360,21 +295,17 @@ class ZAiTag extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: EdgeInsets.symmetric(horizontal: fontSize * 0.62, vertical: fontSize * 0.22),
     decoration: BoxDecoration(
-      gradient: const LinearGradient(colors: [Color(0xFF7C3AED), Color(0xFF4F8AFF)]),
-      borderRadius: BorderRadius.circular(fontSize * 0.55),
+      color: const Color(0xFF1A6BE0),
+      borderRadius: BorderRadius.circular(4),
     ),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(Icons.auto_awesome_rounded, size: fontSize * 1.05, color: Colors.white),
-      SizedBox(width: fontSize * 0.3),
-      Text('AI',
-        style: TextStyle(
-          fontFamily: kBrandFont,
-          color: Colors.white,
-          fontSize: fontSize,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.4,
-        )),
-    ]),
+    child: Text('AI',
+      style: TextStyle(
+        fontFamily: kBrandFont,
+        color: Colors.white,
+        fontSize: fontSize,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.4,
+      )),
   );
 }
 
