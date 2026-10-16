@@ -7,6 +7,11 @@ workflows:
     instance_type: mac_mini_m2
 
     environment:
+      # Codemagic → Teams → Environment variables → group name: supabase
+      # Required vars: SUPABASE_URL, SUPABASE_ANON_KEY
+      # Optional: SUPABASE_BUCKET (defaults to zchat-media in the build script)
+      groups:
+        - supabase
       flutter: 3.41.8
       xcode: latest
       cocoapods: default
@@ -34,8 +39,7 @@ workflows:
         script: |
           cd ios && pod install && cd ..
 
-      # Media uploads: set SUPABASE_URL + SUPABASE_ANON_KEY as Codemagic
-      # application environment variables (do not commit secrets).
+      # Media uploads: vars come from the `supabase` environment group.
       - name: Build iOS (no code sign)
         script: |
           flutter build ios --release --no-codesign \
@@ -71,14 +75,18 @@ workflows:
     instance_type: linux_x2
 
     environment:
+      # Codemagic → Teams → Environment variables → group name: supabase
+      # Required vars: SUPABASE_URL, SUPABASE_ANON_KEY
+      # Optional: SUPABASE_BUCKET (defaults to zchat-media in the build script)
+      groups:
+        - supabase
       flutter: 3.41.8
 
     scripts:
       - name: Get Flutter packages
         script: flutter pub get
 
-      # Media uploads: set SUPABASE_URL + SUPABASE_ANON_KEY as Codemagic
-      # application environment variables (do not commit secrets).
+      # Media uploads: vars come from the `supabase` environment group.
       - name: Build Android APK
         script: |
           flutter build apk --debug \

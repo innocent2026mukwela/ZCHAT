@@ -136,16 +136,21 @@ flutter run -d chrome ^
 
 ### Codemagic / CI
 
-Pass the same defines on `flutter build` (store secrets in Codemagic env vars):
+`codemagic.yaml` links the Codemagic environment group named **`supabase`** on both iOS and Android workflows, and passes those values as dart-defines:
 
 ```yaml
 flutter build apk --debug \
   --dart-define=SUPABASE_URL=$SUPABASE_URL \
   --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
-  --dart-define=SUPABASE_BUCKET=zchat-media
+  --dart-define=SUPABASE_BUCKET=${SUPABASE_BUCKET:-zchat-media}
 ```
 
-Add `SUPABASE_URL` and `SUPABASE_ANON_KEY` as encrypted environment variables in the Codemagic UI for each workflow that should ship media uploads.
+**Innocent / team setup in Codemagic UI:**
+
+1. Teams → Environment variables → create (or open) a group named exactly `supabase`.
+2. Add encrypted variables: `SUPABASE_URL`, `SUPABASE_ANON_KEY` (required). Optional: `SUPABASE_BUCKET` (defaults to `zchat-media`).
+3. Ensure that group is available to the app / workflows (yaml already references `groups: [supabase]`).
+4. Start a build on `main` after `git pull`.
 
 ## AI assistant
 
