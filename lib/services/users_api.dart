@@ -98,7 +98,7 @@ class UsersApi {
             return {
               'uid': d.id,
               'phoneNumber': data['phoneNumber'] as String? ?? '',
-              'fullName': data['fullName'] as String? ?? data['displayName'] as String? ?? 'Demo User',
+              'fullName': data['fullName'] as String? ?? data['displayName'] as String? ?? 'User',
               'role': data['role'] as String? ?? 'student',
               'photoUrl': data['photoUrl'] as String? ?? '',
               'privacyPhoto': data['privacyPhoto'] as String? ?? 'My contacts',

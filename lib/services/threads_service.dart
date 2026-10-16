@@ -48,6 +48,9 @@ class ThreadsService {
     final now = DateTime.now();
     final stale = <String>{};
     for (final p in posts) {
+      // Keep denormalized names on one-time sample posts (rules force authorUid
+      // to the signed-in user; display names are varied on the post itself).
+      if (p['sampleSeed'] == true) continue;
       final uid = p['authorUid'] as String?;
       if (uid == null || uid.isEmpty) continue;
       final at = _authorCacheAt[uid];
@@ -64,6 +67,7 @@ class ThreadsService {
       } catch (_) {}
     }));
     for (final p in posts) {
+      if (p['sampleSeed'] == true) continue;
       final fresh = _authorCache[p['authorUid'] as String? ?? ''];
       if (fresh == null) continue;
       if ((fresh['name'] ?? '').isNotEmpty) p['authorName'] = fresh['name'];

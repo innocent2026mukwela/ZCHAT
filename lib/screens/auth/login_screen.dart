@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
-import '../../config.dart';
 import '../../services/auth_service.dart';
 import '../../utils/glass.dart';
 
@@ -29,18 +28,8 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_formKey.currentState!.validate() || _fullPhone.isEmpty) return;
     setState(() { _loading = true; _error = null; });
     try {
-      final demoOtp = await AuthService.sendOtp(_fullPhone);
+      await AuthService.sendOtp(_fullPhone);
       if (!mounted) return;
-      if (AppConfig.demoAuth && demoOtp != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Demo OTP: $demoOtp  ·  any 6-digit code works'),
-            backgroundColor: const Color(0xFF1A6BE0),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 6),
-          ),
-        );
-      }
       context.go('/otp', extra: _fullPhone);
     } catch (e) {
       setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
@@ -58,90 +47,40 @@ class _LoginScreenState extends State<LoginScreen> {
         height: double.infinity,
         decoration: const BoxDecoration(gradient: kBgGradient),
         child: SafeArea(
-          child: Column(
-            children: [
-              if (AppConfig.demoAuth) const _DemoModeBanner(),
-              Expanded(
-                child: Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 440),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const ZBrandLockup(symbolSize: 58, fontSize: 40),
-                          const SizedBox(height: 12),
-                          Text(
-                            'University of Zambia · Campus messaging',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Colors.white.withAlpha(140),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              letterSpacing: 0.2,
-                            ),
-                          ),
-                          const SizedBox(height: 44),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'Enter your phone number',
-                              style: TextStyle(
-                                color: Colors.white.withAlpha(215),
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          _SignInForm(
-                            formKey: _formKey,
-                            loading: _loading,
-                            error: _error,
-                            onPhoneChanged: (phone) => _fullPhone = phone,
-                            onContinue: _continue,
-                          ),
-                        ],
-                      ).animate().fadeIn(delay: widget.introDelay, duration: 400.ms).slideY(begin: 0.04, end: 0),
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const ZSymbol(size: 58),
+                    const SizedBox(height: 44),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Enter your phone number',
+                        style: TextStyle(
+                          color: Colors.white.withAlpha(215),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DemoModeBanner extends StatelessWidget {
-  const _DemoModeBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xFFE6A817),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            const Icon(Icons.science_outlined, size: 16, color: Color(0xFF1A1200)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'DEMO MODE — OTP is local; no backend required. '
-                'Disable with --dart-define=DEMO_AUTH=false',
-                style: TextStyle(
-                  color: const Color(0xFF1A1200).withAlpha(230),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  height: 1.3,
-                ),
+                    const SizedBox(height: 12),
+                    _SignInForm(
+                      formKey: _formKey,
+                      loading: _loading,
+                      error: _error,
+                      onPhoneChanged: (phone) => _fullPhone = phone,
+                      onContinue: _continue,
+                    ),
+                  ],
+                ).animate().fadeIn(delay: widget.introDelay, duration: 400.ms).slideY(begin: 0.04, end: 0),
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -295,7 +234,7 @@ class _SignInForm extends StatelessWidget {
                 title: const Text('Terms & Privacy', style: TextStyle(color: Colors.white, fontSize: 16)),
                 content: const SingleChildScrollView(
                   child: Text(
-                    'ZCHAT is a University of Zambia student communication and study platform.\n\n'
+                    'ZCHAT is a student communication and study platform.\n\n'
                     'By using ZCHAT you agree to use it respectfully and lawfully, and you consent to '
                     'the storage of your profile, messages, and study data to provide the service. Your '
                     'phone number is used only to create and secure your account. We do not sell your '

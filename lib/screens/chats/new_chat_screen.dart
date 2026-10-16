@@ -86,9 +86,9 @@ class _NewChatScreenState extends State<NewChatScreen> {
               uid: u['uid'] as String? ?? '',
               name: (u['fullName'] as String?)?.trim().isNotEmpty == true
                   ? u['fullName'] as String
-                  : (u['phoneNumber'] as String? ?? 'Demo User'),
+                  : (u['phoneNumber'] as String? ?? 'User'),
               phone: u['phoneNumber'] as String? ?? '',
-              // Demo peer list is intentional discovery — treat as contacts except Nobody.
+              // Suggested contacts for discovery — treat as contacts except Nobody.
               photoUrl: visiblePhotoUrl(u, viewerIsContact: true) ?? '',
             ))
         .where((p) => p.uid.isNotEmpty)
@@ -109,7 +109,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
       if (!silent && mounted) {
         setState(() {
           _loading = false;
-          // Demo mode can still start chats via Demo peers / search.
+          // Local-auth mode can still start chats via suggested contacts / search.
           _error = _demoMode
               ? ''
               : 'Contacts permission denied.\nEnable Contacts access for ZCHAT in Settings.';
@@ -213,7 +213,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
               uid: u['uid'] as String? ?? '',
               name: (u['fullName'] as String?)?.trim().isNotEmpty == true
                   ? u['fullName'] as String
-                  : (u['phoneNumber'] as String? ?? 'Demo User'),
+                  : (u['phoneNumber'] as String? ?? 'User'),
               phone: u['phoneNumber'] as String? ?? '',
               // Free-text search hits are not assumed contacts.
               photoUrl: visiblePhotoUrl(u, viewerIsContact: false) ?? '',
@@ -521,16 +521,16 @@ class _NewChatScreenState extends State<NewChatScreen> {
       }
 
       if (_demoLoading && uniqueDemo.isEmpty) {
-        items.add(_ListItem.sectionHeader('Demo peers', 0));
+        items.add(_ListItem.sectionHeader('People on ZCHAT', 0));
       } else if (uniqueDemo.isNotEmpty) {
         items.add(_ListItem.sectionHeader(
-            q.isEmpty ? 'Demo peers' : 'Matching demo users', uniqueDemo.length));
+            q.isEmpty ? 'People on ZCHAT' : 'Matching contacts', uniqueDemo.length));
         for (final p in uniqueDemo) {
           items.add(_ListItem.demoPeer(p));
         }
       } else if (q.isEmpty) {
         items.add(_ListItem.hint(
-          'No other demo accounts yet. Sign in on a second device/browser '
+          'No other accounts yet. Sign in on a second device/browser '
           'with a different phone number to chat 1:1.',
         ));
       }
@@ -551,14 +551,12 @@ class _NewChatScreenState extends State<NewChatScreen> {
     final hasDemoResults = _demoMode && (_demoPeers.isNotEmpty || _searchHits.isNotEmpty);
     if (_filtered.isEmpty && _search.isNotEmpty && !hasDemoResults && !_searchingRemote) {
       return Center(child: Text(
-        _demoMode
-            ? 'No demo users match "$_search". Try their phone or name.'
-            : 'No contacts match "$_search"',
+        'No contacts match "$_search"',
         style: TextStyle(color: Colors.white.withAlpha(120), fontSize: 14)));
     }
     if (_all.isEmpty && !_demoMode) return const _EmptyView();
     if (_all.isEmpty && _demoMode && items.length <= 3 && !_demoLoading) {
-      // Only action rows — still show the list so Demo peers hint is visible.
+      // Only action rows — still show the list so the suggested-contacts hint is visible.
     }
 
     return ListView.builder(
@@ -664,17 +662,6 @@ class _NewChatScreenState extends State<NewChatScreen> {
                     ],
                   ],
                 )),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4F8AFF).withAlpha(30),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: const Color(0xFF4F8AFF).withAlpha(80)),
-                  ),
-                  child: const Text('DEMO',
-                    style: TextStyle(color: Color(0xFF4F8AFF),
-                        fontSize: 10, fontWeight: FontWeight.w700)),
-                ),
               ]),
             ),
           ).animate(delay: (index * 10).ms).fadeIn();
@@ -834,7 +821,7 @@ class _InviteScreen extends StatelessWidget {
   const _InviteScreen({required this.contact});
 
   static const _inviteText =
-      'Hey! I\'m using ZCHAT — the University of Zambia student app. '
+      'Hey! I\'m using ZCHAT. '
       'Join me: https://zchat.unza.zm/download';
 
   Future<void> _sendSms(BuildContext context) async {

@@ -1,6 +1,6 @@
 {
-    "name": "unza_z_chat",
-    "short_name": "unza_z_chat",
+    "name": "ZCHAT",
+    "short_name": "ZCHAT",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

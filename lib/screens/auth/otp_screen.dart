@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pinput/pinput.dart';
-import '../../config.dart';
 import '../../services/auth_service.dart';
 import '../../services/two_step_service.dart';
 import '../../services/zego_service.dart';
@@ -23,14 +22,15 @@ class _OtpScreenState extends State<OtpScreen> {
   bool _loading        = false;
   bool _resending      = false;
   String? _error;
-  String? _demoOtp;
+  /// Session verification code when local OTP is used (shown neutrally).
+  String? _sessionCode;
   int _secondsLeft     = 60;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _demoOtp = AuthService.lastDemoOtp;
+    _sessionCode = AuthService.lastDemoOtp;
     _startCountdown();
   }
 
@@ -128,19 +128,9 @@ class _OtpScreenState extends State<OtpScreen> {
   Future<void> _resend() async {
     setState(() { _resending = true; _error = null; });
     try {
-      final demoOtp = await AuthService.sendOtp(widget.phoneNumber);
+      final code = await AuthService.sendOtp(widget.phoneNumber);
       if (mounted) {
-        setState(() => _demoOtp = demoOtp ?? AuthService.lastDemoOtp);
-        if (AppConfig.demoAuth && _demoOtp != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Demo OTP: $_demoOtp  ·  any 6-digit code works'),
-              backgroundColor: const Color(0xFF1A6BE0),
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 6),
-            ),
-          );
-        }
+        setState(() => _sessionCode = code ?? AuthService.lastDemoOtp);
       }
       _startCountdown(); _pinController.clear(); _focusNode.requestFocus();
     } catch (e) {
@@ -178,7 +168,6 @@ class _OtpScreenState extends State<OtpScreen> {
             SafeArea(
               child: Column(
                 children: [
-                  if (AppConfig.demoAuth) const _DemoModeBanner(),
                   // Back button
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -229,34 +218,34 @@ class _OtpScreenState extends State<OtpScreen> {
                             ),
                           ).animate(delay: 160.ms).fadeIn(),
 
-                          if (AppConfig.demoAuth && _demoOtp != null) ...[
+                          if (_sessionCode != null) ...[
                             const SizedBox(height: 20),
                             Container(
                               width: double.infinity,
                               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFE6A817).withAlpha(40),
+                                color: Colors.white.withAlpha(12),
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: const Color(0xFFE6A817).withAlpha(160)),
+                                border: Border.all(color: Colors.white.withAlpha(40)),
                               ),
                               child: Column(
                                 children: [
                                   Text(
-                                    'Demo OTP: $_demoOtp',
-                                    style: const TextStyle(
-                                      color: Color(0xFFFFE08A),
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 2,
+                                    'For this session',
+                                    style: TextStyle(
+                                      color: Colors.white.withAlpha(160),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
                                   const SizedBox(height: 6),
                                   Text(
-                                    'Demo mode: any 6-digit code works',
-                                    style: TextStyle(
-                                      color: Colors.white.withAlpha(180),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
+                                    _sessionCode!,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 4,
                                     ),
                                   ),
                                 ],
@@ -359,38 +348,6 @@ class _OtpScreenState extends State<OtpScreen> {
                     ),
                   ),
                 ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DemoModeBanner extends StatelessWidget {
-  const _DemoModeBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xFFE6A817),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            const Icon(Icons.science_outlined, size: 16, color: Color(0xFF1A1200)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'DEMO MODE — OTP is local; no backend required. '
-                'Disable with --dart-define=DEMO_AUTH=false',
-                style: TextStyle(
-                  color: const Color(0xFF1A1200).withAlpha(230),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  height: 1.3,
-                ),
               ),
             ),
           ],

@@ -1,4 +1,4 @@
-const String appName    = 'UnZA z CHAT';
+const String appName    = 'ZCHAT';
 const String appTagline = 'Learn. Connect. Grow.';
 const String apiBaseUrl = 'http://localhost:5000/api'; // USB adb reverse
 

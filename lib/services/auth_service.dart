@@ -105,8 +105,9 @@ class AuthService {
     try {
       await _auth.signInAnonymously();
     } on FirebaseAuthException catch (e) {
+      debugPrint('[AuthService] Anonymous sign-in failed: ${e.code}');
       throw Exception(
-        'Demo sign-in failed (${e.code}). '
+        'Sign-in failed (${e.code}). '
         'Enable Anonymous sign-in in the Firebase Console '
         '(Authentication → Sign-in method → Anonymous).',
       );
@@ -122,7 +123,8 @@ class AuthService {
     await _db.collection('users').doc(uid).set({
       'phoneNumber': phone,
       'demo': true,
-      'fullName': existingData?['fullName'] ?? 'Demo User',
+      'fullName': existingData?['fullName'] ??
+          (phone.isNotEmpty ? phone : 'User'),
       if (!existing.exists) 'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));

@@ -19,7 +19,7 @@ class AiService {
   static String get backendRequiredMessage =>
       'AI requires the ZCHAT backend at $_serverBase. '
       'Start the API, or pass --dart-define=BACKEND_URL=… '
-      '(demo login alone does not include AI).';
+      '(signing in alone does not enable AI).';
 
   /// Lightweight reachability probe (cached ~20s). Does not throw.
   /// Any HTTP response (including 401/404) counts as reachable.

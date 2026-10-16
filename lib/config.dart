@@ -12,10 +12,10 @@ import 'package:flutter/foundation.dart';
 /// Zego / Tenor credentials must be supplied via dart-define — no production
 /// secrets are baked into source defaults.
 ///
-/// Demo auth (no Node backend required):
+/// Local auth (no Node backend required):
 ///
-///   Default ON — OTP is generated locally and shown in the UI.
-///   Profiles are marked `demo: true` and discoverable via New Chat → Demo peers.
+///   Default ON — OTP is generated locally (shown as a session code in OTP UI).
+///   Profiles are marked `demo: true` and discoverable via New Chat suggested contacts.
 ///   Turn off for real backend OTP:
 ///     `flutter run --dart-define=DEMO_AUTH=false`
 ///

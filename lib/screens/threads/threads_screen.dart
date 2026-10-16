@@ -9,7 +9,9 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../config.dart';
 import '../../services/ai_service.dart';
+import '../../services/demo_threads_seed.dart';
 import '../../services/threads_service.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
@@ -40,6 +42,9 @@ class _ThreadsScreenState extends State<ThreadsScreen> with SingleTickerProvider
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
     _loadMyProfile();
+    if (AppConfig.demoAuth) {
+      DemoThreadsSeed.ensureSeeded();
+    }
   }
 
   @override

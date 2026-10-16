@@ -7,8 +7,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:timeago/timeago.dart' as timeago;
+import '../../config.dart';
 import '../../services/chat_service.dart';
 import '../../services/call_service.dart';
+import '../../services/demo_chat_seed.dart';
 import '../../services/status_service.dart';
 import '../../services/users_api.dart';
 import '../../services/voice_assistant_service.dart';
@@ -198,6 +200,14 @@ class _ChatsTabState extends State<_ChatsTab> {
   final _searchCtrl = TextEditingController();
   final _searchFocus = FocusNode();
   bool _showArchived = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AppConfig.demoAuth) {
+      DemoChatSeed.ensureSeeded();
+    }
+  }
 
   void _toggleSearch() {
     setState(() {

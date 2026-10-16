@@ -1,6 +1,6 @@
-# ZCHAT (UnZA z CHAT)
+# ZCHAT
 
-Campus messaging, virtual classroom, and AI study tools for the University of Zambia.
+Campus messaging, virtual classroom, and AI study tools.
 
 ## Prerequisites
 

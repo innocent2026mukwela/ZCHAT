@@ -8,7 +8,9 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../config.dart';
 import '../../services/chat_service.dart';
+import '../../services/demo_chat_seed.dart';
 import '../../utils/glass.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
@@ -63,6 +65,9 @@ class _ChatListScreenState extends State<ChatListScreen>
       }
     });
     _loadLockedChats();
+    if (AppConfig.demoAuth) {
+      DemoChatSeed.ensureSeeded();
+    }
   }
 
   Future<void> _loadLockedChats() async {
