@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'firebase_options.dart';
 import 'services/call_service.dart';
 import 'services/fcm_service.dart';
+import 'services/media_storage_service.dart';
 import 'services/planner_service.dart';
 import 'services/voice_assistant_service.dart';
 import 'services/zego_service.dart';
@@ -21,6 +22,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   AppConfig.validateAtStartup();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await MediaStorageService.init();
   await FcmService.init();
   await initLocalNotifications();
   await VoiceAssistantService.instance.init();

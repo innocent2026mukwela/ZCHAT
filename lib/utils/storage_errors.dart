@@ -1,30 +1,30 @@
-import 'package:firebase_storage/firebase_storage.dart';
+import '../config.dart';
+import '../services/media_storage_service.dart';
 
-/// Maps Firebase Storage failures to a short, actionable message for demos.
+/// Maps media-upload failures to a short, actionable message for demos.
 String friendlyStorageError(Object error) {
-  if (error is FirebaseException) {
-    switch (error.code) {
-      case 'unauthorized':
-      case 'permission-denied':
-        return 'Upload blocked by Storage rules. Deploy storage.rules '
-            '(firebase deploy --only storage) so signed-in users can write '
-            'chat_images, chat_videos, status, and related paths.';
-      case 'object-not-found':
-        return 'File not found in Storage.';
-      case 'canceled':
-        return 'Upload canceled.';
-      case 'retry-limit-exceeded':
-        return 'Upload failed after retries. Check your connection.';
-      default:
-        return error.message?.isNotEmpty == true
-            ? error.message!
-            : 'Storage error (${error.code}).';
-    }
+  if (error is MediaStorageNotConfiguredException) {
+    return 'Media storage not configured. Pass SUPABASE_URL and '
+        'SUPABASE_ANON_KEY via --dart-define (see README).';
   }
+
   final raw = error.toString().replaceFirst('Exception: ', '');
-  if (raw.contains('unauthorized') || raw.contains('permission-denied')) {
-    return 'Upload blocked by Storage rules. Deploy storage.rules '
-        '(firebase deploy --only storage) so signed-in users can write media.';
+  if (raw == 'Media storage not configured' ||
+      raw.contains('Media storage not configured')) {
+    return 'Media storage not configured. Pass SUPABASE_URL and '
+        'SUPABASE_ANON_KEY via --dart-define (see README).';
   }
-  return raw;
+  if (raw.contains('row-level security') ||
+      raw.contains('violates') ||
+      raw.contains('Unauthorized') ||
+      raw.contains('403') ||
+      raw.contains('401')) {
+    return 'Upload blocked by Supabase Storage policies. '
+        'Allow insert/select on bucket "${AppConfig.supabaseBucket}" (see README).';
+  }
+  if (raw.contains('Bucket not found')) {
+    return 'Storage bucket missing. Create a public bucket named '
+        '"${AppConfig.supabaseBucket}" in the Supabase dashboard.';
+  }
+  return raw.isNotEmpty ? raw : 'Upload failed. Check your connection.';
 }

@@ -34,9 +34,14 @@ workflows:
         script: |
           cd ios && pod install && cd ..
 
+      # Media uploads: set SUPABASE_URL + SUPABASE_ANON_KEY as Codemagic
+      # application environment variables (do not commit secrets).
       - name: Build iOS (no code sign)
         script: |
-          flutter build ios --release --no-codesign
+          flutter build ios --release --no-codesign \
+            --dart-define=SUPABASE_URL=$SUPABASE_URL \
+            --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
+            --dart-define=SUPABASE_BUCKET=${SUPABASE_BUCKET:-zchat-media}
 
       - name: Package unsigned IPA
         script: |
@@ -72,8 +77,14 @@ workflows:
       - name: Get Flutter packages
         script: flutter pub get
 
+      # Media uploads: set SUPABASE_URL + SUPABASE_ANON_KEY as Codemagic
+      # application environment variables (do not commit secrets).
       - name: Build Android APK
-        script: flutter build apk --debug
+        script: |
+          flutter build apk --debug \
+            --dart-define=SUPABASE_URL=$SUPABASE_URL \
+            --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
+            --dart-define=SUPABASE_BUCKET=${SUPABASE_BUCKET:-zchat-media}
 
     artifacts:
       - build/app/outputs/flutter-apk/*.apk

@@ -1,16 +1,16 @@
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../utils/storage_errors.dart';
+import 'media_storage_service.dart';
 
 class PapersService {
-  static final _db      = FirebaseFirestore.instance;
-  static final _storage = FirebaseStorage.instance;
-  static final _auth    = FirebaseAuth.instance;
+  static final _db   = FirebaseFirestore.instance;
+  static final _auth = FirebaseAuth.instance;
 
   static User get _me => _auth.currentUser!;
 
@@ -105,7 +105,7 @@ class PapersService {
     return false;
   }
 
-  /// Upload a PDF to Firebase Storage and save metadata in Firestore.
+  /// Upload a PDF to Supabase Storage and save metadata in Firestore.
   /// Returns the Firestore document ID.
   static Future<String> uploadPaper({
     required String courseId,
@@ -117,16 +117,17 @@ class PapersService {
     final uid  = _me.uid;
     final name = _me.displayName ?? 'Student';
 
-    // Upload file to Storage
-    final storageRef = _storage
-        .ref()
-        .child('papers/$courseId/${year}_S${semester}_${DateTime.now().millisecondsSinceEpoch}.pdf');
     final file = File(filePath);
-    final uploadTask = await storageRef.putFile(
-      file,
-      SettableMetadata(contentType: 'application/pdf'),
-    );
-    final fileUrl  = await uploadTask.ref.getDownloadURL();
+    late final String fileUrl;
+    try {
+      fileUrl = await MediaStorageService.uploadFile(
+        file: file,
+        path: 'papers/$courseId/${year}_S${semester}_${DateTime.now().millisecondsSinceEpoch}.pdf',
+        contentType: 'application/pdf',
+      );
+    } catch (e) {
+      throw Exception(friendlyStorageError(e));
+    }
     final fileSizeBytes = await file.length();
     final fileSizeStr   = _formatSize(fileSizeBytes);
 

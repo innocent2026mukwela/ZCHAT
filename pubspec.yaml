@@ -92,6 +92,9 @@ dependencies:
   firebase_storage: ^13.0.0
   firebase_messaging: ^16.0.0
 
+  # Media uploads (replaces Firebase Storage for FYP — free Supabase tier)
+  supabase_flutter: ^2.8.4
+
 
 dev_dependencies:
   flutter_test:

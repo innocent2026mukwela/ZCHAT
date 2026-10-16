@@ -1,13 +1,12 @@
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import '../utils/storage_errors.dart';
+import 'media_storage_service.dart';
 
 class StatusService {
-  static final _db      = FirebaseFirestore.instance;
-  static final _storage = FirebaseStorage.instance;
-  static final _auth    = FirebaseAuth.instance;
+  static final _db   = FirebaseFirestore.instance;
+  static final _auth = FirebaseAuth.instance;
 
   static String get _myUid => _auth.currentUser!.uid;
 
@@ -34,16 +33,16 @@ class StatusService {
     final now     = DateTime.now();
     final expires = now.add(const Duration(hours: 24));
 
-    // Path matches storage.rules `status/{uid}/**` (also allowed under statuses/).
-    final ref = _storage
-        .ref()
-        .child('status/$_myUid/${now.millisecondsSinceEpoch}.jpg');
+    late final String url;
     try {
-      await ref.putFile(File(filePath), SettableMetadata(contentType: 'image/jpeg'));
+      url = await MediaStorageService.uploadFile(
+        file: File(filePath),
+        path: 'status/$_myUid/${now.millisecondsSinceEpoch}.jpg',
+        contentType: 'image/jpeg',
+      );
     } catch (e) {
       throw Exception(friendlyStorageError(e));
     }
-    final url = await ref.getDownloadURL();
 
     await _db
         .collection('statuses')
@@ -62,18 +61,16 @@ class StatusService {
   /// Uploads a short status video and creates the Firestore item.
   static Future<void> postVideoFile(String filePath, {String? caption}) async {
     final now = DateTime.now();
-    final ref = _storage
-        .ref()
-        .child('status/$_myUid/${now.millisecondsSinceEpoch}.mp4');
+    late final String url;
     try {
-      await ref.putFile(
-        File(filePath),
-        SettableMetadata(contentType: 'video/mp4'),
+      url = await MediaStorageService.uploadFile(
+        file: File(filePath),
+        path: 'status/$_myUid/${now.millisecondsSinceEpoch}.mp4',
+        contentType: 'video/mp4',
       );
     } catch (e) {
       throw Exception(friendlyStorageError(e));
     }
-    final url = await ref.getDownloadURL();
     await postVideoStatus(url, caption: caption);
   }
 

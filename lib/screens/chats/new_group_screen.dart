@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
@@ -10,7 +9,9 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../services/chat_service.dart';
+import '../../services/media_storage_service.dart';
 import '../../utils/glass.dart';
+import '../../utils/storage_errors.dart';
 
 class NewGroupScreen extends StatefulWidget {
   const NewGroupScreen({super.key});
@@ -154,10 +155,11 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
     try {
       String photoUrl = '';
       if (_groupAvatar != null) {
-        final ref = FirebaseStorage.instance
-            .ref('group_avatars/${DateTime.now().millisecondsSinceEpoch}.jpg');
-        await ref.putFile(_groupAvatar!);
-        photoUrl = await ref.getDownloadURL();
+        photoUrl = await MediaStorageService.uploadFile(
+          file: _groupAvatar!,
+          path: 'group_avatars/${DateTime.now().millisecondsSinceEpoch}.jpg',
+          contentType: 'image/jpeg',
+        );
       }
       final chatId = await ChatService.createGroupChat(
           name, _selectedUids.toList(), photoUrl: photoUrl);
@@ -166,7 +168,14 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
             '/chats/$chatId?name=${Uri.encodeComponent(name)}');
       }
     } catch (e) {
-      if (mounted) setState(() => _creating = false);
+      if (mounted) {
+        setState(() => _creating = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(friendlyStorageError(e)),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
     }
   }
 

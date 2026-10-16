@@ -1,13 +1,13 @@
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import '../utils/storage_errors.dart';
 import 'ai_service.dart';
+import 'media_storage_service.dart';
 
 class ThreadsService {
-  static final _db      = FirebaseFirestore.instance;
-  static final _storage = FirebaseStorage.instance;
+  static final _db  = FirebaseFirestore.instance;
   static final _col = _db.collection('threads');
   static User get _me => FirebaseAuth.instance.currentUser!;
 
@@ -183,13 +183,15 @@ class ThreadsService {
     });
   }
 
-  /// Uploads a post image to Cloud Storage and returns its download URL.
+  /// Uploads a post image to Supabase Storage and returns its public URL.
   static Future<String> uploadPostImage(File file) async {
     final ext  = file.path.split('.').last;
     final path = 'thread_images/${_me.uid}/${DateTime.now().millisecondsSinceEpoch}.$ext';
-    final ref  = _storage.ref().child(path);
-    await ref.putFile(file);
-    return ref.getDownloadURL();
+    try {
+      return await MediaStorageService.uploadFile(file: file, path: path);
+    } catch (e) {
+      throw Exception(friendlyStorageError(e));
+    }
   }
 
   static Future<void> deletePost(String postId) async {

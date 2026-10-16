@@ -19,8 +19,8 @@ import 'package:flutter/foundation.dart';
 ///   Turn off for real backend OTP:
 ///     `flutter run --dart-define=DEMO_AUTH=false`
 ///
-/// Media uploads still need Storage rules deployed (see README / storage.rules).
-/// AI features still need BACKEND_URL reachable.
+/// Media uploads use Supabase Storage (see README). Pass SUPABASE_URL +
+/// SUPABASE_ANON_KEY via dart-define. AI features still need BACKEND_URL.
 class AppConfig {
   /// When true, login skips the Node OTP API and uses a local demo OTP plus
   /// Firebase Anonymous Auth. Disable for production: `--dart-define=DEMO_AUTH=false`.
@@ -56,6 +56,30 @@ class AppConfig {
   static bool get zegoConfigured =>
       zegoAppId != 0 && zegoAppSign.isNotEmpty;
 
+  /// Supabase project URL for media uploads (chat images, status, papers, …).
+  ///   `--dart-define=SUPABASE_URL=https://xxxx.supabase.co`
+  static const supabaseUrl = String.fromEnvironment(
+    'SUPABASE_URL',
+    defaultValue: '',
+  );
+
+  /// Supabase anon (public) key. Empty → uploads fail with a clear message.
+  ///   `--dart-define=SUPABASE_ANON_KEY=eyJ…`
+  static const supabaseAnonKey = String.fromEnvironment(
+    'SUPABASE_ANON_KEY',
+    defaultValue: '',
+  );
+
+  /// Storage bucket name (create as public for simple demo playback).
+  ///   `--dart-define=SUPABASE_BUCKET=zchat-media`
+  static const supabaseBucket = String.fromEnvironment(
+    'SUPABASE_BUCKET',
+    defaultValue: 'zchat-media',
+  );
+
+  static bool get supabaseConfigured =>
+      supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty;
+
   /// Logs configuration warnings once at startup (debug / profile only).
   static void validateAtStartup() {
     if (kReleaseMode) return;
@@ -69,6 +93,12 @@ class AppConfig {
       debugPrint(
         '[AppConfig] Zego credentials not set — voice/video calls disabled. '
         'Pass --dart-define=ZEGO_APP_ID=… and ZEGO_APP_SIGN=…',
+      );
+    }
+    if (!supabaseConfigured) {
+      debugPrint(
+        '[AppConfig] Supabase not set — media uploads disabled. '
+        'Pass --dart-define=SUPABASE_URL=… and SUPABASE_ANON_KEY=…',
       );
     }
     if (backendBase.contains('localhost') || backendBase.contains('127.0.0.1')) {

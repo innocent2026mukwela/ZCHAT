@@ -7,7 +7,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:go_router/go_router.dart';
@@ -29,6 +28,7 @@ import '../../config.dart';
 import '../../services/ai_service.dart';
 import '../../services/auto_download_service.dart';
 import '../../services/chat_service.dart';
+import '../../services/media_storage_service.dart';
 import '../../services/presence_service.dart';
 import '../../utils/glass.dart';
 import '../../utils/privacy.dart';
@@ -141,10 +141,10 @@ class _ChatScreenState extends State<ChatScreen>
     final file = result.files.first;
     if (file.path == null) return;
     try {
-      final ref = FirebaseStorage.instance
-          .ref('chat_docs/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}_${file.name}');
-      await ref.putFile(File(file.path!));
-      final url = await ref.getDownloadURL();
+      final url = await MediaStorageService.uploadFile(
+        file: File(file.path!),
+        path: 'chat_docs/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}_${file.name}',
+      );
       await ChatService.sendMessage(
         widget.chatId,
         '📄 ${file.name}',
@@ -193,10 +193,10 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       final file = File(picked.path);
       final fileName = picked.name;
-      final ref = FirebaseStorage.instance
-          .ref('chat_videos/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}_$fileName');
-      await ref.putFile(file);
-      final url = await ref.getDownloadURL();
+      final url = await MediaStorageService.uploadFile(
+        file: file,
+        path: 'chat_videos/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}_$fileName',
+      );
       await ChatService.sendMessage(
         widget.chatId,
         '🎥 Video',
@@ -950,22 +950,22 @@ class _ChatScreenState extends State<ChatScreen>
     final s   = duration.inSeconds;
     final dur = '${(s ~/ 60).toString().padLeft(1, '0')}:${(s % 60).toString().padLeft(2, '0')}';
 
-    // Upload to Firebase Storage
     try {
-      final ref = FirebaseStorage.instance
-          .ref('voice_notes/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}.m4a');
-      await ref.putFile(File(path));
-      final url = await ref.getDownloadURL();
+      final url = await MediaStorageService.uploadFile(
+        file: File(path),
+        path: 'voice_notes/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}.m4a',
+        contentType: 'audio/mp4',
+      );
       await ChatService.sendMessage(
         widget.chatId, '🎤 Voice message ($dur)',
         type: 'voice', audioUrl: url, voiceDuration: dur,
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Failed to send voice message. Check your connection.'),
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Failed to send voice message: ${friendlyStorageError(e)}'),
           backgroundColor: Colors.redAccent,
-          duration: Duration(seconds: 3),
+          duration: const Duration(seconds: 5),
         ));
       }
     }

@@ -6,7 +6,8 @@ Campus messaging, virtual classroom, and AI study tools.
 
 - [Flutter](https://docs.flutter.dev/get-started/install) 3.24+ (project tested with 3.47)
 - A running ZCHAT backend (OTP auth, AI, notifications) — default `http://localhost:5000`
-- Firebase project configured via `lib/firebase_options.dart` / platform config files
+- Firebase project configured via `lib/firebase_options.dart` / platform config files (Auth + Firestore; **no Blaze / Firebase Storage required**)
+- Free [Supabase](https://supabase.com/) project for chat/status/paper media uploads (see below)
 - Optional: [ZegoCloud](https://www.zegocloud.com/) credentials for voice/video and live class
 
 ## Setup
@@ -58,13 +59,16 @@ Without `TENOR_KEY`, the in-chat GIF picker stays hidden.
 
 See `lib/config.dart`. All environment overrides use `--dart-define`:
 
-| Define         | Purpose                          | Default                 |
-|----------------|----------------------------------|-------------------------|
-| `BACKEND_URL`  | Auth / AI / notification API     | `http://localhost:5000` |
-| `DEMO_AUTH`    | Local OTP + anonymous Firebase   | `true`                  |
-| `ZEGO_APP_ID`  | Zego app id (int)                | `0` (calls disabled)    |
-| `ZEGO_APP_SIGN`| Zego app sign                    | empty                   |
-| `TENOR_KEY`    | Tenor GIF API key                | empty                   |
+| Define              | Purpose                          | Default                 |
+|---------------------|----------------------------------|-------------------------|
+| `BACKEND_URL`       | Auth / AI / notification API     | `http://localhost:5000` |
+| `DEMO_AUTH`         | Local OTP + anonymous Firebase   | `true`                  |
+| `ZEGO_APP_ID`       | Zego app id (int)                | `0` (calls disabled)    |
+| `ZEGO_APP_SIGN`     | Zego app sign                    | empty                   |
+| `TENOR_KEY`         | Tenor GIF API key                | empty                   |
+| `SUPABASE_URL`      | Supabase project URL             | empty (uploads disabled)|
+| `SUPABASE_ANON_KEY` | Supabase anon/public key         | empty                   |
+| `SUPABASE_BUCKET`   | Storage bucket name              | `zchat-media`           |
 
 ## Roles
 
@@ -84,17 +88,64 @@ Demo mode is **on by default** (`DEMO_AUTH=true`). Login shows a local OTP; any 
 
 Turn demo auth off for real OTP: `--dart-define=DEMO_AUTH=false`.
 
-## Firebase Storage (media uploads)
+## Supabase Storage (media uploads)
 
-Status photos/videos and chat images/videos upload to Firebase Storage. Anonymous demo users are fine **if** Storage rules allow any signed-in user (`request.auth != null`) on the paths the client uses (`chat_images/`, `chat_videos/`, `chat_docs/`, `status/`, `statuses/`, `voice_notes/`, `papers/`, …).
+Chat images/videos/docs, voice notes, status photo/video, papers PDFs, avatars, and thread images upload to **Supabase Storage** (free tier). Firestore still stores the returned public URL in the same fields as before. Firebase Auth is unchanged.
 
-Deploy the repo rules:
+If `SUPABASE_URL` / `SUPABASE_ANON_KEY` are empty, uploads fail with **“Media storage not configured”** (no fake success).
 
-```bash
-firebase deploy --only storage
+### Team setup (verify once)
+
+1. Create a free project at [supabase.com](https://supabase.com/).
+2. **Storage → New bucket** → name `zchat-media` → enable **Public bucket** (simplest for demo playback on iOS; public read URLs).
+3. **Project Settings → API** → copy **Project URL** and **anon public** key.
+4. Run with dart-defines (see below) and test: send a **chat image**, then post a **status photo**.
+
+### Storage policies (FYP demo)
+
+In **Storage → Policies** for `zchat-media`, allow public read and open insert for the demo. Example SQL (SQL editor):
+
+```sql
+-- Public read (bucket is public; policy still needed for API list/download in some setups)
+create policy "Public read zchat-media"
+on storage.objects for select
+using (bucket_id = 'zchat-media');
+
+-- Demo-only: anyone with the anon key can upload (NOT for production)
+create policy "Anon upload zchat-media"
+on storage.objects for insert
+with check (bucket_id = 'zchat-media');
+
+-- Optional: allow overwrite / delete during demos
+create policy "Anon update zchat-media"
+on storage.objects for update
+using (bucket_id = 'zchat-media');
 ```
 
-If rules are missing or outdated, the app shows a clear upload error (it does **not** fake success). See `storage.rules`.
+**Security caveat:** anon upload is **demo-only**. Anyone who has the anon key can write to the bucket. For a later hardening step, add Supabase Auth (or map Firebase UID into path prefixes) and tighten RLS to `auth.uid()` / path prefixes. Prefer a file size limit in the Supabase dashboard if available.
+
+### Run with Supabase
+
+```bash
+flutter run -d chrome ^
+  --dart-define=BACKEND_URL=http://localhost:5000 ^
+  --dart-define=SUPABASE_URL=https://YOUR_PROJECT.supabase.co ^
+  --dart-define=SUPABASE_ANON_KEY=YOUR_ANON_KEY ^
+  --dart-define=SUPABASE_BUCKET=zchat-media
+```
+
+### Codemagic / CI
+
+Pass the same defines on `flutter build` (store secrets in Codemagic env vars):
+
+```yaml
+flutter build apk --debug \
+  --dart-define=SUPABASE_URL=$SUPABASE_URL \
+  --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
+  --dart-define=SUPABASE_BUCKET=zchat-media
+```
+
+Add `SUPABASE_URL` and `SUPABASE_ANON_KEY` as encrypted environment variables in the Codemagic UI for each workflow that should ship media uploads.
 
 ## AI assistant
 

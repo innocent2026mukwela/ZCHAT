@@ -1,15 +1,14 @@
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import '../utils/storage_errors.dart';
 import 'ai_service.dart';
 import 'encryption_service.dart';
+import 'media_storage_service.dart';
 
 class ChatService {
-  static final _db      = FirebaseFirestore.instance;
-  static final _auth    = FirebaseAuth.instance;
-  static final _storage = FirebaseStorage.instance;
+  static final _db   = FirebaseFirestore.instance;
+  static final _auth = FirebaseAuth.instance;
 
   static String get _myUid => _auth.currentUser!.uid;
 
@@ -320,13 +319,12 @@ class ChatService {
       {String caption = '', bool viewOnce = false}) async {
     final ext  = imageFile.path.split('.').last;
     final path = 'chat_images/$chatId/${DateTime.now().millisecondsSinceEpoch}.$ext';
-    final ref  = _storage.ref().child(path);
+    late final String url;
     try {
-      await ref.putFile(imageFile);
+      url = await MediaStorageService.uploadFile(file: imageFile, path: path);
     } catch (e) {
       throw Exception(friendlyStorageError(e));
     }
-    final url  = await ref.getDownloadURL();
     await sendMessage(chatId, caption.isNotEmpty ? caption : '📷 Photo',
         type: 'image', imageUrl: url, viewOnce: viewOnce);
   }

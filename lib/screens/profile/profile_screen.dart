@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -13,9 +12,11 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:pinput/pinput.dart';
 import '../../services/auto_download_service.dart';
 import '../../services/fcm_service.dart';
+import '../../services/media_storage_service.dart';
 import '../../services/two_step_service.dart';
 import '../../services/planner_service.dart';
 import '../../utils/glass.dart';
+import '../../utils/storage_errors.dart';
 import '../../widgets/bottom_nav_bar.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -25,9 +26,8 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final _auth    = FirebaseAuth.instance;
-  final _db      = FirebaseFirestore.instance;
-  final _storage = FirebaseStorage.instance;
+  final _auth = FirebaseAuth.instance;
+  final _db   = FirebaseFirestore.instance;
 
   User? get _user => _auth.currentUser;
 
@@ -156,15 +156,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (picked == null || !mounted) return;
     setState(() => _uploadingPhoto = true);
     try {
-      final ref = _storage.ref().child('avatars/${_user!.uid}/profile.jpg');
-      await ref.putFile(File(picked.path), SettableMetadata(contentType: 'image/jpeg'));
-      final url = await ref.getDownloadURL();
+      final url = await MediaStorageService.uploadFile(
+        file: File(picked.path),
+        path: 'avatars/${_user!.uid}/profile.jpg',
+        contentType: 'image/jpeg',
+      );
       await _user?.updatePhotoURL(url);
       await _save({'photoUrl': url});
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload failed: $e'), backgroundColor: Colors.redAccent),
+          SnackBar(
+            content: Text('Upload failed: ${friendlyStorageError(e)}'),
+            backgroundColor: Colors.redAccent,
+          ),
         );
       }
     } finally {
