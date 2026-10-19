@@ -119,22 +119,15 @@ Turn demo auth off for real OTP: `--dart-define=DEMO_AUTH=false`.
 
 ### Node backend (lives outside this Flutter repo)
 
-ZCHAT-main has **no** `backend/` folder. Copy the helper from [`tools/backend_accept_demo_auth.js`](tools/backend_accept_demo_auth.js) into your API auth middleware.
+ZCHAT-main has **no** `backend/` folder. **Innocent:** follow the 5 PowerShell steps in [`tools/APPLY_DEMO_AI_BACKEND.md`](tools/APPLY_DEMO_AI_BACKEND.md).
 
-**CORS** (Chrome localhost):
-
-```js
-app.use(cors({
-  origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-ZChat-Demo-Auth'],
-}));
-```
-
-**ONE middleware change** — stop rejecting anonymous; accept the demo header:
+Helper: [`tools/backend_accept_demo_auth.js`](tools/backend_accept_demo_auth.js) exports `corsOptions` + `demoAuthMiddleware(admin)`.
 
 ```js
-// BAD: if (decoded.firebase?.sign_in_provider === 'anonymous') return 401
-// GOOD: use resolveDemoOrFirebaseUser from tools/backend_accept_demo_auth.js
+const { corsOptions, demoAuthMiddleware } = require('./middleware/backend_accept_demo_auth');
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+app.use('/api/ai', demoAuthMiddleware(admin)); // do NOT reject anonymous
 ```
 
 **AI env (server `.env`)**:
@@ -147,6 +140,8 @@ GOOGLE_APPLICATION_CREDENTIALS=./serviceAccount.json
 ```
 
 Without `ANTHROPIC_API_KEY` (or your Claude key), the API will answer auth/health but AI chat replies will fail.
+
+The Flutter AI home screen (“AI requires backend”) means **connection or CORS failed** — not 401. Auth rejection shows a different message after you try to chat.
 
 ## Supabase Storage (media uploads)
 

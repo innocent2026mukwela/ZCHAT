@@ -1,36 +1,64 @@
 /**
  * DROP-IN patch for Innocent's Node API (unza-z-chat-backend / server.js).
  *
- * Problem: Flutter DEMO_AUTH uses Firebase Anonymous Auth (no Email/Password
- * owner access). Many backends reject `sign_in_provider === 'anonymous'`.
+ * Problem: Flutter DEMO_AUTH uses Firebase Anonymous Auth. Many backends
+ * reject `sign_in_provider === 'anonymous'`, and Chrome CORS often omits
+ * `X-ZChat-Demo-Auth`, so the AI tab shows "AI requires backend".
  *
- * Fix: accept either a normal Firebase ID token OR the demo header the
- * Flutter client always sends when DEMO_AUTH=true.
+ * Flutter probe note: AiService.isBackendReachable() fails only on
+ * connection refused / timeout / CORS ClientException. A 401 still counts
+ * as "reachable". The home AI screen message therefore means Node is down
+ * OR CORS is blocking — not (yet) an auth rejection.
  *
- * 1) CORS — allow the demo header (and Chrome localhost origins):
+ * ─── EXACT server.js wiring ─────────────────────────────────────────────
  *
- *    app.use(cors({
- *      origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
- *      allowedHeaders: ['Content-Type', 'Authorization', 'X-ZChat-Demo-Auth'],
- *    }));
+ * 1) Copy this file next to server.js:
+ *      unza-z-chat-backend/middleware/backend_accept_demo_auth.js
+ *    (or: unza-z-chat-backend/backend_accept_demo_auth.js)
  *
- * 2) In your Firebase auth middleware (wherever you call verifyIdToken),
- *    REPLACE the anonymous reject with the helper below — or paste this
- *    function and call it instead of a hard anonymous block:
+ * 2) Near the top of server.js (after express + cors + firebase-admin):
  *
- *    // BAD (breaks FYP demo):
- *    // if (decoded.firebase?.sign_in_provider === 'anonymous') return res.status(401)...
+ *      const cors = require('cors');
+ *      const { resolveDemoOrFirebaseUser, demoAuthMiddleware, corsOptions } =
+ *        require('./middleware/backend_accept_demo_auth');
+ *      // adjust path if you put the file next to server.js:
+ *      // require('./backend_accept_demo_auth')
  *
- *    // GOOD:
- *    const user = await resolveDemoOrFirebaseUser(req, admin);
- *    if (!user) return res.status(401).json({ error: 'Unauthorized' });
- *    req.user = user;
+ * 3) CORS — MUST run before routes (replace any existing cors() call):
  *
- * 3) Optional .env:
- *    ALLOW_DEMO_AUTH=true
+ *      app.use(cors(corsOptions));
+ *      app.options('*', cors(corsOptions)); // preflight for Chrome
+ *
+ * 4) Auth middleware — REPLACE any block that rejects anonymous, e.g.:
+ *
+ *      // BAD:
+ *      // if (decoded.firebase?.sign_in_provider === 'anonymous') return res.status(401)...
+ *
+ *      // GOOD (protect /api/ai and other authenticated routes):
+ *      const requireAuth = demoAuthMiddleware(admin);
+ *      app.use('/api/ai', requireAuth);
+ *      // or inside your existing auth middleware:
+ *      // const user = await resolveDemoOrFirebaseUser(req, admin);
+ *      // if (!user) return res.status(401).json({ error: 'Unauthorized' });
+ *      // req.user = user; next();
+ *
+ * 5) Backend .env (same folder as server.js):
+ *      ALLOW_DEMO_AUTH=true
+ *      ANTHROPIC_API_KEY=sk-ant-...     # required for AI chat replies
+ *      # (or whatever Claude key name your routes already read)
+ *
+ * 6) Restart: npm start   (listen on port 5000)
  */
 
 'use strict';
+
+/** CORS options Flutter Chrome + DEMO_AUTH need. */
+const corsOptions = {
+  origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-ZChat-Demo-Auth'],
+  // credentials: false — Flutter http does not need cookies for AI
+};
 
 /**
  * @param {import('express').Request} req
@@ -73,4 +101,28 @@ async function resolveDemoOrFirebaseUser(req, admin) {
   return null;
 }
 
-module.exports = { resolveDemoOrFirebaseUser };
+/**
+ * Express middleware factory. Use after firebase-admin is initialized:
+ *   app.use('/api/ai', demoAuthMiddleware(admin));
+ */
+function demoAuthMiddleware(admin) {
+  return async function demoAuth(req, res, next) {
+    try {
+      const user = await resolveDemoOrFirebaseUser(req, admin);
+      if (!user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      req.user = user;
+      return next();
+    } catch (err) {
+      console.warn('[auth] demoAuthMiddleware error:', err?.message || err);
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+  };
+}
+
+module.exports = {
+  corsOptions,
+  resolveDemoOrFirebaseUser,
+  demoAuthMiddleware,
+};
