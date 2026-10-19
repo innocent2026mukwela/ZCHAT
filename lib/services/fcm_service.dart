@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/material.dart';
 import '../router.dart';
 
@@ -16,7 +17,16 @@ class FcmService {
   static final _db  = FirebaseFirestore.instance;
 
   /// Call once from main() after Firebase.initializeApp().
+  ///
+  /// No-op on web: Chrome's Notification.requestPermission can block the first
+  /// frame (blank screen), and getToken needs a VAPID key + messaging SW that
+  /// this app does not configure for Flutter web demos.
   static Future<void> init() async {
+    if (kIsWeb) {
+      debugPrint('[FCM] Skipping init on web');
+      return;
+    }
+
     // Register background handler
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -18,22 +19,70 @@ import 'router.dart';
 import 'screens/calls/incoming_call_screen.dart';
 import 'widgets/voice_assistant_overlay.dart';
 
+Future<void> _safeInit(
+  String name,
+  Future<void> Function() fn, {
+  Duration timeout = const Duration(seconds: 8),
+}) async {
+  try {
+    await fn().timeout(timeout);
+  } catch (e, st) {
+    // Never leave Chrome on a blank frame because an optional plugin hung/threw.
+    debugPrint('[main] $name init skipped: $e\n$st');
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   AppConfig.validateAtStartup();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await MediaStorageService.init();
-  await FcmService.init();
-  await initLocalNotifications();
-  await VoiceAssistantService.instance.init();
 
-  // Init Zego if user is already signed in (app relaunch)
-  if (FirebaseAuth.instance.currentUser != null) {
-    await ZegoService.init();
+  await _safeInit(
+    'Firebase',
+    () => Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform),
+    timeout: const Duration(seconds: 15),
+  );
+
+  // Firestore web often reports "client is offline" when WebChannel/HTTP2 is
+  // blocked (campus Wi‑Fi, antivirus, adblock). Configure transport + wake the
+  // client before any screen touches Firestore (OTP verify, splash, etc.).
+  if (Firebase.apps.isNotEmpty) {
+    try {
+      if (kIsWeb) {
+        FirebaseFirestore.instance.settings = const Settings(
+          persistenceEnabled: true,
+          webExperimentalForceLongPolling: true,
+        );
+      }
+      await FirebaseFirestore.instance.enableNetwork();
+    } catch (e, st) {
+      debugPrint('[main] Firestore network setup skipped: $e\n$st');
+    }
+  }
+
+  await _safeInit('MediaStorage', MediaStorageService.init);
+
+  // FCM + local notifications block (or throw) on web: Notification.requestPermission
+  // can hang until the user answers a browser prompt, and getToken needs a VAPID key
+  // + firebase-messaging-sw.js that this app does not ship. Skip on web so runApp
+  // always reaches the first frame.
+  if (!kIsWeb) {
+    await _safeInit('FCM', FcmService.init);
+    await _safeInit('LocalNotifications', initLocalNotifications);
+  } else {
+    debugPrint('[main] Skipping FCM + local notifications on web');
+  }
+
+  await _safeInit('VoiceAssistant', () => VoiceAssistantService.instance.init());
+
+  // Zego / callkit-style plugins are mobile-first; never block web startup.
+  if (!kIsWeb && FirebaseAuth.instance.currentUser != null) {
+    await _safeInit('Zego', ZegoService.init);
   }
 
   GoogleFonts.config.allowRuntimeFetching = false;
-  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  if (!kIsWeb) {
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  }
   runApp(const UnZAzChatApp());
 }
 

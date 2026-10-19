@@ -11,9 +11,27 @@ class TwoStepService {
       sha256.convert(utf8.encode(pin)).toString();
 
   static Future<bool> isEnabled() async {
-    final doc = await _db.collection('users').doc(_uid).get();
-    final h = doc.data()?['twoStepPinHash'] as String?;
-    return h != null && h.isNotEmpty;
+    try {
+      try {
+        await _db.enableNetwork();
+      } catch (_) {}
+      final doc = await _db.collection('users').doc(_uid).get(
+            const GetOptions(source: Source.serverAndCache),
+          );
+      final h = doc.data()?['twoStepPinHash'] as String?;
+      return h != null && h.isNotEmpty;
+    } catch (_) {
+      // Offline / unavailable — do not block login; treat as PIN off.
+      try {
+        final cached = await _db.collection('users').doc(_uid).get(
+              const GetOptions(source: Source.cache),
+            );
+        final h = cached.data()?['twoStepPinHash'] as String?;
+        return h != null && h.isNotEmpty;
+      } catch (_) {
+        return false;
+      }
+    }
   }
 
   static Future<void> setPin(String pin) async {

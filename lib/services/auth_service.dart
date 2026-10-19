@@ -106,10 +106,18 @@ class AuthService {
       final uid = _auth.currentUser!.uid;
       final backendUser = json['user'] as Map<String, dynamic>?;
       final phone = backendUser?['phone_number'] as String? ?? phoneNumber;
-      await _db.collection('users').doc(uid).set(
-        {'phoneNumber': phone},
-        SetOptions(merge: true),
-      );
+      try {
+        await _ensureFirestoreOnline();
+        await _withFirestoreRetry(
+          () => _db.collection('users').doc(uid).set(
+                {'phoneNumber': phone},
+                SetOptions(merge: true),
+              ),
+        );
+      } catch (e) {
+        // Auth already succeeded — surface a clear message rather than hanging.
+        throw Exception(_friendlyFirestoreError(e));
+      }
 
       return {
         'uid': uid,
@@ -140,26 +148,125 @@ class AuthService {
       );
     }
 
-    final uid = _auth.currentUser!.uid;
+    // Auth can succeed a tick before currentUser is non-null on web.
+    var user = _auth.currentUser;
+    if (user == null) {
+      try {
+        user = await _auth
+            .authStateChanges()
+            .where((u) => u != null)
+            .first
+            .timeout(const Duration(seconds: 8));
+      } catch (_) {
+        throw Exception(
+          'Sign-in did not finish. Check your connection and try again.',
+        );
+      }
+    }
+    final uid = user!.uid;
     final phone = phoneNumber.isNotEmpty ? phoneNumber : (_demoPhone ?? '');
 
-    final existing = await _db.collection('users').doc(uid).get();
-    final existingData = existing.data();
+    await _ensureFirestoreOnline();
+
+    Map<String, dynamic>? existingData;
+    var docExists = false;
+    try {
+      final existing = await _withFirestoreRetry(
+        () => _db.collection('users').doc(uid).get(
+              const GetOptions(source: Source.serverAndCache),
+            ),
+      );
+      existingData = existing.data();
+      docExists = existing.exists;
+    } catch (e) {
+      if (!_isFirestoreOffline(e)) {
+        throw Exception(_friendlyFirestoreError(e));
+      }
+      // Offline get: try cache, else treat as new profile (do not hang login).
+      debugPrint('[AuthService] Profile get offline — trying cache: $e');
+      try {
+        final cached = await _db.collection('users').doc(uid).get(
+              const GetOptions(source: Source.cache),
+            );
+        existingData = cached.data();
+        docExists = cached.exists;
+      } catch (_) {
+        existingData = null;
+        docExists = false;
+      }
+    }
+
     final needsProfile = existingData?['profileComplete'] != true;
 
-    await _db.collection('users').doc(uid).set({
-      'phoneNumber': phone,
-      'demo': true,
-      'fullName': existingData?['fullName'] ??
-          (phone.isNotEmpty ? phone : 'User'),
-      if (!existing.exists) 'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    try {
+      await _withFirestoreRetry(
+        () => _db.collection('users').doc(uid).set({
+          'phoneNumber': phone,
+          'demo': true,
+          'fullName': existingData?['fullName'] ??
+              (phone.isNotEmpty ? phone : 'User'),
+          if (!docExists) 'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true)),
+      );
+    } catch (e) {
+      throw Exception(_friendlyFirestoreError(e));
+    }
 
     return {
       'uid': uid,
       'needsProfile': needsProfile,
     };
+  }
+
+  static Future<void> _ensureFirestoreOnline() async {
+    try {
+      await _db.enableNetwork();
+    } catch (e) {
+      debugPrint('[AuthService] enableNetwork: $e');
+    }
+  }
+
+  static bool _isFirestoreOffline(Object e) {
+    if (e is FirebaseException) {
+      final msg = (e.message ?? '').toLowerCase();
+      return e.code == 'unavailable' || msg.contains('offline');
+    }
+    final s = e.toString().toLowerCase();
+    return s.contains('unavailable') ||
+        s.contains('client is offline') ||
+        s.contains('cloud_firestore/unavailable');
+  }
+
+  static String _friendlyFirestoreError(Object e) {
+    if (_isFirestoreOffline(e)) {
+      return 'Cannot reach Firestore (appears offline). '
+          'Check internet, disable adblock for this page, try Edge/Chrome, '
+          'then tap the code again.';
+    }
+    return _friendlyError(e);
+  }
+
+  /// Retries transient Firestore offline / unavailable errors.
+  static Future<T> _withFirestoreRetry<T>(
+    Future<T> Function() op, {
+    int attempts = 4,
+  }) async {
+    Object? last;
+    for (var i = 0; i < attempts; i++) {
+      try {
+        if (i > 0) await _ensureFirestoreOnline();
+        return await op();
+      } catch (e) {
+        last = e;
+        if (!_isFirestoreOffline(e) || i == attempts - 1) rethrow;
+        debugPrint(
+          '[AuthService] Firestore retry ${i + 1}/$attempts: $e',
+        );
+        await Future.delayed(Duration(milliseconds: 450 * (i + 1)));
+      }
+    }
+    throw last!;
   }
 
   static String? _beginLocalOtp(String phoneNumber) {
@@ -190,6 +297,9 @@ class AuthService {
 
   /// User-facing text — never dump raw ClientException URLs.
   static String _friendlyError(Object e) {
+    if (_isFirestoreOffline(e)) {
+      return _friendlyFirestoreError(e);
+    }
     if (_isNetworkFailure(e)) {
       return 'Cannot reach the server. Check your connection and try again.';
     }
@@ -252,8 +362,26 @@ class AuthService {
     final user = _auth.currentUser;
     if (user == null) return null;
 
-    final doc = await _db.collection('users').doc(user.uid).get();
-    return doc.exists ? doc.data() : null;
+    try {
+      await _ensureFirestoreOnline();
+      final doc = await _withFirestoreRetry(
+        () => _db.collection('users').doc(user.uid).get(
+              const GetOptions(source: Source.serverAndCache),
+            ),
+        attempts: 3,
+      );
+      return doc.exists ? doc.data() : null;
+    } catch (e) {
+      debugPrint('[AuthService] getMe failed: $e');
+      try {
+        final cached = await _db.collection('users').doc(user.uid).get(
+              const GetOptions(source: Source.cache),
+            );
+        return cached.exists ? cached.data() : null;
+      } catch (_) {
+        return null;
+      }
+    }
   }
 
   // ── Logout ────────────────────────────────────────────────────────────────

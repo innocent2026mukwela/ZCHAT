@@ -60,8 +60,14 @@ class _OtpScreenState extends State<OtpScreen> {
       }
       if (!mounted) return;
 
-      // Two-step verification: if user has a PIN, require it before entry
-      final pinEnabled = await TwoStepService.isEnabled();
+      // Two-step verification: if user has a PIN, require it before entry.
+      // Soft-fail when Firestore is briefly offline so DEMO_AUTH login can proceed.
+      var pinEnabled = false;
+      try {
+        pinEnabled = await TwoStepService.isEnabled();
+      } catch (e) {
+        debugPrint('[OtpScreen] two-step check skipped: $e');
+      }
       if (pinEnabled && mounted) {
         final passed = await _showPinChallenge();
         if (!passed) {
@@ -76,7 +82,12 @@ class _OtpScreenState extends State<OtpScreen> {
         return;
       }
       // Route lecturers to their home — do not dump them on the student shell.
-      final me = await AuthService.getMe();
+      Map<String, dynamic>? me;
+      try {
+        me = await AuthService.getMe();
+      } catch (e) {
+        debugPrint('[OtpScreen] getMe skipped: $e');
+      }
       if (!mounted) return;
       final role = me?['role'] as String?;
       context.go(role == 'lecturer' ? '/lecturer/home' : '/home');
@@ -94,6 +105,13 @@ class _OtpScreenState extends State<OtpScreen> {
   static String _otpErrorText(Object e) {
     final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
     final lower = raw.toLowerCase();
+    if (lower.contains('unavailable') ||
+        lower.contains('client is offline') ||
+        lower.contains('cloud_firestore')) {
+      return 'Cannot reach Firestore (appears offline). '
+          'Check internet, disable adblock for this page, try Edge/Chrome, '
+          'then enter the code again.';
+    }
     if (lower.contains('failed to fetch') ||
         lower.contains('clientexception') ||
         lower.contains('socketexception') ||
