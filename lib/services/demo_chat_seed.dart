@@ -27,15 +27,28 @@ class DemoChatSeed {
     if (!AppConfig.demoAuth) return;
     if (_running) return;
 
-    final user = _auth.currentUser;
-    if (user == null) return;
-    final myUid = user.uid;
+    // DEMO_AUTH cold start / hot restart can mount Home a tick before anon
+    // auth restores — wait briefly so we seed under the real uid.
+    var user = _auth.currentUser;
+    if (user == null) {
+      try {
+        user = await _auth
+            .authStateChanges()
+            .where((u) => u != null)
+            .first
+            .timeout(const Duration(seconds: 8));
+      } catch (_) {
+        debugPrint('[DemoChatSeed] No auth user — skip seed');
+        return;
+      }
+    }
+    final myUid = user!.uid;
 
     _running = true;
     try {
-      // Gate on real sample chats — not just a prefs/Firestore flag. A stale
-      // `sampleChatsSeeded` (or a prior encrypt failure after the flag was set)
-      // previously skipped seeding forever while ZFeed still showed dummy posts.
+      // Gate on real sample chats (members query), not just a prefs/Firestore
+      // flag. Stale sampleChatsSeeded after encrypt failure skipped seeding
+      // forever while ZFeed dummy posts still appeared.
       if (await _hasSampleChats(myUid)) {
         await _markSeeded(myUid);
         return;
@@ -118,12 +131,23 @@ class DemoChatSeed {
 
     final ids = [myUid, peer.uid]..sort();
     // Dedicated sample ids (not the sorted uid pair used by real 1:1 chats).
-    // After deleteChat() removes the user from `members`, the old doc is no
-    // longer readable/writable under rules — a fresh sample_* id always works.
-    final chatId = 'sample_${myUid}_${peer.uid}';
-    final chatRef = _db.collection('chats').doc(chatId);
+    // After deleteChat() removes the user from `members`, the old doc still
+    // exists but is unreadable — fall through to a fresh sample_* id.
+    var chatId = 'sample_${myUid}_${peer.uid}';
+    var chatRef = _db.collection('chats').doc(chatId);
 
-    final existing = await chatRef.get();
+    DocumentSnapshot<Map<String, dynamic>>? existing;
+    try {
+      existing = await chatRef.get();
+    } catch (e) {
+      debugPrint(
+        '[DemoChatSeed] Cannot read $chatId (likely left members): $e — new id',
+      );
+      chatId =
+          'sample_${myUid}_${peer.uid}_${DateTime.now().millisecondsSinceEpoch}';
+      chatRef = _db.collection('chats').doc(chatId);
+      existing = null;
+    }
     final thread = peer.messages;
     final last = thread.last;
     final lastAt = now.subtract(peer.lastAgo);
@@ -155,7 +179,7 @@ class DemoChatSeed {
     };
 
     var needMessages = true;
-    if (!existing.exists) {
+    if (existing == null || !existing.exists) {
       batch.set(chatRef, chatPayload);
     } else {
       final data = existing.data() ?? {};
@@ -163,9 +187,23 @@ class DemoChatSeed {
       final missingMe = !members.contains(myUid);
       final incomplete = data['sampleSeed'] != true ||
           (data['lastMessage'] as String? ?? '').isEmpty;
-      if (missingMe || incomplete) {
+
+      if (missingMe) {
+        // Self-join path only — rules hasOnly these membership keys when the
+        // caller is not yet in resource.data.members. Full chatPayload merge
+        // would be denied.
+        batch.update(chatRef, {
+          'members': FieldValue.arrayUnion([myUid]),
+          'memberUids': FieldValue.arrayUnion([myUid]),
+          'memberNames.$myUid': myName,
+          'unreadCount.$myUid': unread,
+          'archived.$myUid': false,
+        });
+      } else if (incomplete) {
+        // Already a member — may update any fields.
         batch.set(chatRef, chatPayload, SetOptions(merge: true));
       }
+
       final msgs = await chatRef.collection('messages').limit(1).get();
       needMessages = msgs.docs.isEmpty;
       if (!needMessages && !missingMe && !incomplete) return;
