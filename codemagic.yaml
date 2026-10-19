@@ -42,7 +42,9 @@ workflows:
       # Media uploads: vars come from the `supabase` environment group.
       - name: Build iOS (no code sign)
         script: |
+          # Unsigned IPA for AltStore / sideload. DEMO_AUTH=true for examiner login.
           flutter build ios --release --no-codesign \
+            --dart-define=DEMO_AUTH=true \
             --dart-define=SUPABASE_URL=$SUPABASE_URL \
             --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
             --dart-define=SUPABASE_BUCKET=${SUPABASE_BUCKET:-zchat-media}
