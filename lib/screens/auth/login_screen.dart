@@ -6,6 +6,18 @@ import 'package:intl_phone_field/intl_phone_field.dart';
 import '../../services/auth_service.dart';
 import '../../utils/glass.dart';
 
+String _loginErrorText(Object e) {
+  final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+  final lower = raw.toLowerCase();
+  if (lower.contains('failed to fetch') ||
+      lower.contains('clientexception') ||
+      lower.contains('socketexception') ||
+      raw.contains('://')) {
+    return 'Cannot reach the server. Check your connection and try again.';
+  }
+  return raw.isEmpty ? 'Something went wrong. Please try again.' : raw;
+}
+
 class LoginScreen extends StatefulWidget {
   final Duration introDelay;
 
@@ -32,7 +44,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       context.go('/otp', extra: _fullPhone);
     } catch (e) {
-      setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+      setState(() => _error = _loginErrorText(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }

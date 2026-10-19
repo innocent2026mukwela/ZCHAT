@@ -30,11 +30,31 @@ flutter run -d chrome --dart-define=BACKEND_URL=http://localhost:5000
 flutter run -d emulator-5554 --dart-define=BACKEND_URL=http://10.0.2.2:5000
 ```
 
-### Physical device (same Wi‑Fi as your PC)
+### Physical phone — FYP demo login (recommended)
+
+Login does **not** need the Node server. Rebuild with demo auth on (default, but pass it explicitly so an old LAN build is replaced):
 
 ```bash
-flutter run --dart-define=BACKEND_URL=http://YOUR_PC_LAN_IP:5000
+flutter run --dart-define-from-file=dart_defines.demo.json
 ```
+
+Or:
+
+```bash
+flutter run --dart-define=DEMO_AUTH=true
+```
+
+Then on the phone: enter any valid Zambian number → **Continue** → enter the **6-digit code shown on the Verification screen** (or any 6 digits) → complete profile if asked.
+
+Do **not** pass `BACKEND_URL=http://172.x.x.x:5000` with `DEMO_AUTH=false` unless the phone can reach that PC on the same Wi‑Fi.
+
+### Physical device + real Node OTP (optional)
+
+```bash
+flutter run --dart-define=DEMO_AUTH=false --dart-define=BACKEND_URL=http://YOUR_PC_LAN_IP:5000
+```
+
+Phone and PC must share Wi‑Fi; allow port **5000** through Windows Firewall; use the PC’s current LAN IP (`ipconfig`).
 
 ### Voice / video / live classroom
 

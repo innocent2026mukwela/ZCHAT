@@ -12,18 +12,24 @@ import 'package:flutter/foundation.dart';
 /// Zego / Tenor credentials must be supplied via dart-define — no production
 /// secrets are baked into source defaults.
 ///
-/// Local auth (no Node backend required):
+/// Local auth (no Node backend required) — preferred for FYP phone demos:
 ///
 ///   Default ON — OTP is generated locally (shown as a session code in OTP UI).
 ///   Profiles are marked `demo: true` and discoverable via New Chat suggested contacts.
+///   Phone demo (no LAN Node needed):
+///     `flutter run --dart-define=DEMO_AUTH=true`
 ///   Turn off for real backend OTP:
-///     `flutter run --dart-define=DEMO_AUTH=false`
+///     `flutter run --dart-define=DEMO_AUTH=false --dart-define=BACKEND_URL=http://PC_LAN_IP:5000`
+///
+/// Setting BACKEND_URL alone does **not** disable demo auth. If Node is
+/// unreachable while DEMO_AUTH=false, AuthService still falls back to local OTP.
 ///
 /// Media uploads use Supabase Storage (see README). Pass SUPABASE_URL +
 /// SUPABASE_ANON_KEY via dart-define. AI features still need BACKEND_URL.
 class AppConfig {
-  /// When true, login skips the Node OTP API and uses a local demo OTP plus
-  /// Firebase Anonymous Auth. Disable for production: `--dart-define=DEMO_AUTH=false`.
+  /// When true, login skips the Node OTP API and uses a local OTP plus
+  /// Firebase Anonymous Auth. Default true for demos. Disable for production:
+  /// `--dart-define=DEMO_AUTH=false`.
   static const demoAuth = bool.fromEnvironment(
     'DEMO_AUTH',
     defaultValue: true,

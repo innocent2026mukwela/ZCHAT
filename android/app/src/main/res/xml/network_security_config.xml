@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Allow cleartext HTTP to a LAN Node API during FYP demos (OTP when DEMO_AUTH=false). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -81,11 +81,26 @@ class _OtpScreenState extends State<OtpScreen> {
       final role = me?['role'] as String?;
       context.go(role == 'lecturer' ? '/lecturer/home' : '/home');
     } catch (e) {
-      setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _pinController.clear(); });
+      setState(() {
+        _error = _otpErrorText(e);
+        _pinController.clear();
+      });
       _focusNode.requestFocus();
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  static String _otpErrorText(Object e) {
+    final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+    final lower = raw.toLowerCase();
+    if (lower.contains('failed to fetch') ||
+        lower.contains('clientexception') ||
+        lower.contains('socketexception') ||
+        raw.contains('://')) {
+      return 'Cannot reach the server. Check your connection and try again.';
+    }
+    return raw.isEmpty ? 'Something went wrong. Please try again.' : raw;
   }
 
   Future<bool> _showPinChallenge() async {
@@ -134,7 +149,7 @@ class _OtpScreenState extends State<OtpScreen> {
       }
       _startCountdown(); _pinController.clear(); _focusNode.requestFocus();
     } catch (e) {
-      setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+      setState(() => _error = _otpErrorText(e));
     } finally {
       if (mounted) setState(() => _resending = false);
     }

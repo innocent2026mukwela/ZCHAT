@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
@@ -9,20 +10,27 @@ import '../config.dart';
 /// Handles authentication via the ZCHAT backend's OTP endpoints, bridging
 /// into Firebase Auth with a custom token.
 ///
-/// When [AppConfig.demoAuth] is true, OTP is generated locally (no Node
-/// backend) and sign-in uses Firebase Anonymous Auth + a Firestore profile.
-/// 10.0.2.2 = Android emulator loopback to host machine.
-/// For a physical device on the same Wi-Fi, use your machine's LAN IP.
+/// When [AppConfig.demoAuth] is true (default), OTP is generated locally (no
+/// Node backend) and sign-in uses Firebase Anonymous Auth + a Firestore profile.
+///
+/// If demo auth is off but the Node OTP API is unreachable, [sendOtp] falls
+/// back to the same local OTP path so FYP device demos still work.
 class AuthService {
   static const _baseUrl = '${AppConfig.backendBase}/api/auth';
 
   static final _auth = FirebaseAuth.instance;
-  static final _db   = FirebaseFirestore.instance;
-  static final _rng  = Random();
+  static final _db = FirebaseFirestore.instance;
+  static final _rng = Random();
 
-  /// Last OTP generated in demo mode (for UI display). Null outside demo.
+  /// Last OTP generated in local/demo mode (for UI display). Null otherwise.
   static String? lastDemoOtp;
   static String? _demoPhone;
+
+  /// Session flag: true after a successful local OTP send (config or fallback).
+  static bool _localOtpSession = false;
+
+  /// True when this login session should verify via local OTP (not Node).
+  static bool get usingLocalOtp => AppConfig.demoAuth || _localOtpSession;
 
   // ── Current user ──────────────────────────────────────────────────────────
 
@@ -32,70 +40,89 @@ class AuthService {
 
   // ── Send OTP ──────────────────────────────────────────────────────────────
 
-  /// Sends (or in demo mode, generates) an OTP for [phoneNumber].
-  /// Returns the demo OTP string when [AppConfig.demoAuth] is true; otherwise null.
+  /// Sends (or generates locally) an OTP for [phoneNumber].
+  /// Returns the local OTP string when using local auth; otherwise null.
   static Future<String?> sendOtp(String phoneNumber) async {
     if (AppConfig.demoAuth) {
-      lastDemoOtp = _generateDemoOtp();
-      _demoPhone = phoneNumber;
-      debugPrint('[AuthService] Demo OTP for $phoneNumber: $lastDemoOtp');
-      return lastDemoOtp;
+      return _beginLocalOtp(phoneNumber);
     }
 
-    lastDemoOtp = null;
-    _demoPhone = null;
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_baseUrl/send-otp'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'phoneNumber': phoneNumber}),
+          )
+          .timeout(const Duration(seconds: 8));
 
-    final res = await http.post(
-      Uri.parse('$_baseUrl/send-otp'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'phoneNumber': phoneNumber}),
-    );
-
-    if (res.statusCode != 200) {
-      throw Exception(_errorMessage(res));
+      if (res.statusCode != 200) {
+        throw Exception(_errorMessage(res));
+      }
+      lastDemoOtp = null;
+      _demoPhone = null;
+      _localOtpSession = false;
+      return null;
+    } catch (e) {
+      if (_isNetworkFailure(e)) {
+        // FYP / device demo: Node unreachable → silent local OTP (no URL dump).
+        debugPrint(
+          '[AuthService] Node OTP unreachable ($e) — using local OTP fallback',
+        );
+        return _beginLocalOtp(phoneNumber);
+      }
+      throw Exception(_friendlyError(e));
     }
-    return null;
   }
 
   // ── Verify OTP ────────────────────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> verifyOtp(
       String phoneNumber, String otp) async {
-    if (AppConfig.demoAuth) {
+    if (usingLocalOtp) {
       return _verifyDemoOtp(phoneNumber, otp);
     }
 
-    final res = await http.post(
-      Uri.parse('$_baseUrl/verify-otp'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'phoneNumber': phoneNumber, 'otp': otp}),
-    );
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_baseUrl/verify-otp'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'phoneNumber': phoneNumber, 'otp': otp}),
+          )
+          .timeout(const Duration(seconds: 12));
 
-    if (res.statusCode != 200) {
-      throw Exception(_errorMessage(res));
+      if (res.statusCode != 200) {
+        throw Exception(_errorMessage(res));
+      }
+
+      final json = jsonDecode(res.body) as Map<String, dynamic>;
+      await _auth.signInWithCustomToken(json['firebaseToken'] as String);
+
+      // Custom-token sign-in leaves FirebaseAuth.phoneNumber null, so persist the
+      // verified phone (from the backend user record, falling back to the number
+      // just entered) onto the Firestore profile. Contact matching and user
+      // search rely on users/{uid}.phoneNumber.
+      final uid = _auth.currentUser!.uid;
+      final backendUser = json['user'] as Map<String, dynamic>?;
+      final phone = backendUser?['phone_number'] as String? ?? phoneNumber;
+      await _db.collection('users').doc(uid).set(
+        {'phoneNumber': phone},
+        SetOptions(merge: true),
+      );
+
+      return {
+        'uid': uid,
+        'needsProfile': json['needsProfile'],
+      };
+    } catch (e) {
+      if (e is Exception && e.toString().startsWith('Exception: ')) rethrow;
+      throw Exception(_friendlyError(e));
     }
-
-    final json = jsonDecode(res.body) as Map<String, dynamic>;
-    await _auth.signInWithCustomToken(json['firebaseToken'] as String);
-
-    // Custom-token sign-in leaves FirebaseAuth.phoneNumber null, so persist the
-    // verified phone (from the backend user record, falling back to the number
-    // just entered) onto the Firestore profile. Contact matching and user
-    // search rely on users/{uid}.phoneNumber.
-    final uid = _auth.currentUser!.uid;
-    final backendUser = json['user'] as Map<String, dynamic>?;
-    final phone = backendUser?['phone_number'] as String? ?? phoneNumber;
-    await _db.collection('users').doc(uid).set(
-      {'phoneNumber': phone}, SetOptions(merge: true));
-
-    return {
-      'uid': uid,
-      'needsProfile': json['needsProfile'],
-    };
   }
 
-  /// Demo path: any 6-digit code works. Signs in anonymously and writes a
-  /// demo user profile so the rest of the app can use [currentUser].
+  /// Local path: any 6-digit code works. Signs in anonymously and writes a
+  /// user profile so the rest of the app can use [currentUser].
   static Future<Map<String, dynamic>> _verifyDemoOtp(
       String phoneNumber, String otp) async {
     if (!RegExp(r'^\d{6}$').hasMatch(otp)) {
@@ -135,8 +162,45 @@ class AuthService {
     };
   }
 
+  static String? _beginLocalOtp(String phoneNumber) {
+    lastDemoOtp = _generateDemoOtp();
+    _demoPhone = phoneNumber;
+    _localOtpSession = true;
+    debugPrint('[AuthService] Local OTP for $phoneNumber: $lastDemoOtp');
+    return lastDemoOtp;
+  }
+
   static String _generateDemoOtp() =>
       (_rng.nextInt(900000) + 100000).toString();
+
+  static bool _isNetworkFailure(Object e) {
+    // Avoid dart:io (not available on web) — match by type + message.
+    if (e is TimeoutException || e is http.ClientException) return true;
+    final s = e.toString().toLowerCase();
+    return s.contains('failed to fetch') ||
+        s.contains('clientexception') ||
+        s.contains('socketexception') ||
+        s.contains('httpexception') ||
+        s.contains('connection refused') ||
+        s.contains('connection timed out') ||
+        s.contains('network is unreachable') ||
+        s.contains('software caused connection abort') ||
+        s.contains('xmlhttprequest');
+  }
+
+  /// User-facing text — never dump raw ClientException URLs.
+  static String _friendlyError(Object e) {
+    if (_isNetworkFailure(e)) {
+      return 'Cannot reach the server. Check your connection and try again.';
+    }
+    final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+    if (raw.toLowerCase().contains('failed to fetch') ||
+        raw.contains('://') ||
+        raw.toLowerCase().contains('clientexception')) {
+      return 'Cannot reach the server. Check your connection and try again.';
+    }
+    return raw.isEmpty ? 'Something went wrong. Please try again.' : raw;
+  }
 
   // ── Complete profile ──────────────────────────────────────────────────────
 
@@ -155,21 +219,21 @@ class AuthService {
     if (user == null) throw Exception('Not authenticated.');
 
     final data = {
-      'uid':             user.uid,
-      'fullName':        fullName,
-      'role':            role,
-      'university':      university,
-      'studentNumber':   studentNumber,
-      'school':          school,
-      'program':         program,
-      'staffId':         staffId,
-      'department':      department,
-      'lecturerEmail':   lecturerEmail,
+      'uid': user.uid,
+      'fullName': fullName,
+      'role': role,
+      'university': university,
+      'studentNumber': studentNumber,
+      'school': school,
+      'program': program,
+      'staffId': staffId,
+      'department': department,
+      'lecturerEmail': lecturerEmail,
       'profileComplete': true,
       // Keep demo profiles discoverable for New Chat peer list / search.
-      if (AppConfig.demoAuth) 'demo': true,
-      'createdAt':       FieldValue.serverTimestamp(),
-      'updatedAt':       FieldValue.serverTimestamp(),
+      if (usingLocalOtp) 'demo': true,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
     };
 
     await _db.collection('users').doc(user.uid).set(data, SetOptions(merge: true));
@@ -197,6 +261,7 @@ class AuthService {
   static Future<void> logout() async {
     lastDemoOtp = null;
     _demoPhone = null;
+    _localOtpSession = false;
     await _auth.signOut();
   }
 
