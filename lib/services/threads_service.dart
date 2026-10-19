@@ -188,7 +188,10 @@ class ThreadsService {
     final ext  = file.path.split('.').last;
     final path = 'thread_images/${_me.uid}/${DateTime.now().millisecondsSinceEpoch}.$ext';
     try {
-      return await MediaStorageService.uploadFile(file: file, path: path);
+      return await MediaStorageService.uploadBytes(
+        bytes: await file.readAsBytes(),
+        path: path,
+      );
     } catch (e) {
       throw Exception(friendlyStorageError(e));
     }

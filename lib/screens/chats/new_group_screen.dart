@@ -155,8 +155,8 @@ class _NewGroupScreenState extends State<NewGroupScreen> {
     try {
       String photoUrl = '';
       if (_groupAvatar != null) {
-        photoUrl = await MediaStorageService.uploadFile(
-          file: _groupAvatar!,
+        photoUrl = await MediaStorageService.uploadBytes(
+          bytes: await _groupAvatar!.readAsBytes(),
           path: 'group_avatars/${DateTime.now().millisecondsSinceEpoch}.jpg',
           contentType: 'image/jpeg',
         );

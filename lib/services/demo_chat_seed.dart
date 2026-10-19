@@ -3,33 +3,58 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config.dart';
-import 'encryption_service.dart';
 
 /// One-time sample 1:1 chats for local OTP / anonymous auth ([AppConfig.demoAuth]).
 ///
 /// Writes real `chats/{id}` + `messages` so [ChatService] streams work unchanged.
 /// Peer profile stubs are best-effort — Firestore rules only allow `users/{self}`
 /// writes, so display names live on `memberNames` when stubs cannot be created.
+///
+/// Unlike live chat sends, sample messages are stored as plaintext (legacy path
+/// accepted by [EncryptionService.decrypt]). That avoids a second
+/// `encryptionKey` merge write, which was aborting the whole seed when it failed
+/// while [DemoThreadsSeed] (no encryption) still succeeded.
 class DemoChatSeed {
   static final _db = FirebaseFirestore.instance;
   static final _auth = FirebaseAuth.instance;
 
   static bool _running = false;
 
-  static const _prefsKeyPrefix = 'sample_chats_seeded_';
+  /// Bumped so devices that marked v1 seeded without visible chats re-run.
+  static const _prefsKeyPrefix = 'sample_chats_seeded_v2_';
 
   /// Call after auth when the chat list first loads. Safe to invoke multiple times.
   static Future<void> ensureSeeded() async {
     if (!AppConfig.demoAuth) return;
     if (_running) return;
 
-    final user = _auth.currentUser;
-    if (user == null) return;
-    final myUid = user.uid;
+    var user = _auth.currentUser;
+    if (user == null) {
+      // Cold start / hot restart can mount Home before auth restores.
+      try {
+        user = await _auth
+            .authStateChanges()
+            .where((u) => u != null)
+            .first
+            .timeout(const Duration(seconds: 8));
+      } catch (_) {
+        debugPrint('[DemoChatSeed] No auth user — skip seed');
+        return;
+      }
+    }
+    final myUid = user!.uid;
 
     _running = true;
     try {
-      if (await _alreadySeeded(myUid)) return;
+      final flagged = await _alreadySeeded(myUid);
+      final visible = await _sampleChatVisible(myUid);
+      if (flagged && visible) return;
+      if (flagged && !visible) {
+        debugPrint(
+          '[DemoChatSeed] Stale seed flag for $myUid — re-seeding',
+        );
+        await _clearSeeded(myUid);
+      }
 
       final myName = await _resolveMyName(myUid);
       final now = DateTime.now();
@@ -38,12 +63,35 @@ class DemoChatSeed {
         await _seedChat(myUid: myUid, myName: myName, peer: peer, now: now);
       }
 
+      if (!await _sampleChatVisible(myUid)) {
+        throw StateError(
+          'Sample chats were not readable after seed '
+          '(check Firestore rules / network).',
+        );
+      }
+
       await _markSeeded(myUid);
       debugPrint('[DemoChatSeed] Seeded ${_peers.length} chats for $myUid');
     } catch (e, st) {
       debugPrint('[DemoChatSeed] Seed failed: $e\n$st');
     } finally {
       _running = false;
+    }
+  }
+
+  /// True when the first sample chat exists and lists [myUid] in `members`
+  /// (the field [ChatService.chatsStream] queries).
+  static Future<bool> _sampleChatVisible(String myUid) async {
+    try {
+      final ids = [myUid, _peers.first.uid]..sort();
+      final chatId = ids.join('_');
+      final doc = await _db.collection('chats').doc(chatId).get();
+      if (!doc.exists) return false;
+      final members = List<String>.from(doc.data()?['members'] as List? ?? []);
+      return members.contains(myUid);
+    } catch (e) {
+      debugPrint('[DemoChatSeed] Visibility check failed: $e');
+      return false;
     }
   }
 
@@ -56,9 +104,26 @@ class DemoChatSeed {
     try {
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getBool('$_prefsKeyPrefix$myUid') == true) return true;
+      // Legacy v1 flag — treat as seeded only if chats are actually visible
+      // (checked by caller); still return true so we clear+reseed when missing.
+      if (prefs.getBool('sample_chats_seeded_$myUid') == true) return true;
     } catch (_) {}
 
     return false;
+  }
+
+  static Future<void> _clearSeeded(String myUid) async {
+    try {
+      await _db.collection('users').doc(myUid).set(
+        {'sampleChatsSeeded': FieldValue.delete()},
+        SetOptions(merge: true),
+      );
+    } catch (_) {}
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('$_prefsKeyPrefix$myUid');
+      await prefs.remove('sample_chats_seeded_$myUid');
+    } catch (_) {}
   }
 
   static Future<void> _markSeeded(String myUid) async {
@@ -73,6 +138,7 @@ class DemoChatSeed {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('$_prefsKeyPrefix$myUid', true);
+      await prefs.remove('sample_chats_seeded_$myUid');
     } catch (_) {}
   }
 
@@ -103,15 +169,37 @@ class DemoChatSeed {
     final chatRef = _db.collection('chats').doc(chatId);
 
     final existing = await chatRef.get();
-    if (existing.exists) return;
+    if (existing.exists) {
+      final data = existing.data() ?? {};
+      final members = List<String>.from(data['members'] as List? ?? []);
+      if (!members.contains(myUid)) {
+        // Self-join only: rules allow these keys when auth.uid is not yet a member.
+        // Do not touch sampleSeed here — that fails the hasOnly() gate.
+        await chatRef.update({
+          'members': FieldValue.arrayUnion([myUid]),
+          'memberUids': FieldValue.arrayUnion([myUid]),
+          'memberNames.$myUid': myName,
+          'unreadCount.$myUid': peer.unreadForMe,
+          'archived.$myUid': false,
+        });
+      }
+      // Chat shell already present — do not duplicate messages.
+      return;
+    }
 
     final thread = peer.messages;
     final last = thread.last;
     final lastAt = now.subtract(peer.lastAgo);
     final unread = peer.unreadForMe;
 
-    // Create the chat first so EncryptionService can attach encryptionKey via merge.
-    await chatRef.set({
+    final stepMinutes = thread.length > 1
+        ? (peer.spanMinutes ~/ (thread.length - 1)).clamp(1, 180)
+        : 5;
+    final step = Duration(minutes: stepMinutes);
+
+    // One batch: chat + messages (same reliability pattern as DemoThreadsSeed).
+    final batch = _db.batch();
+    batch.set(chatRef, {
       'id': chatId,
       'type': 'direct',
       'members': ids,
@@ -127,32 +215,26 @@ class DemoChatSeed {
       'sampleSeed': true,
     });
 
-    // Stagger message times ending at [lastAt].
-    final stepMinutes = thread.length > 1
-        ? (peer.spanMinutes ~/ (thread.length - 1)).clamp(1, 180)
-        : 5;
-    final step = Duration(minutes: stepMinutes);
-
     for (var i = 0; i < thread.length; i++) {
       final msg = thread[i];
       final createdAt = lastAt.subtract(step * (thread.length - 1 - i));
       final fromMe = msg.fromMe;
       final senderUid = fromMe ? myUid : peer.uid;
       final senderName = fromMe ? myName : peer.name;
-      final encrypted = await EncryptionService.encrypt(chatId, msg.text);
-      final msgRef = chatRef.collection('messages').doc();
+      final msgRef = chatRef.collection('messages').doc('sample_msg_$i');
 
       final readBy = <String>[senderUid];
       if (fromMe || unread == 0) {
         if (!readBy.contains(myUid)) readBy.add(myUid);
       }
 
-      await msgRef.set({
+      batch.set(msgRef, {
         'id': msgRef.id,
         'chatId': chatId,
         'senderUid': senderUid,
         'senderName': senderName,
-        'text': encrypted,
+        // Plaintext: EncryptionService.decrypt accepts legacy non-iv payloads.
+        'text': msg.text,
         'type': 'text',
         'imageUrl': null,
         'audioUrl': null,
@@ -168,8 +250,11 @@ class DemoChatSeed {
         'edited': false,
         'viewOnce': false,
         'viewOnceViewedBy': [],
+        'sampleSeed': true,
       });
     }
+
+    await batch.commit();
   }
 
   /// Best-effort peer profile for New Chat / presence. Ignored if rules deny.

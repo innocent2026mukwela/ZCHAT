@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -12,8 +12,9 @@ class MediaStorageNotConfiguredException implements Exception {
 
 /// Uploads chat / status / paper media to a Supabase Storage bucket.
 ///
-/// Firebase Auth + Firestore stay unchanged; only binary files move here so
-/// the team can stay on the free Firebase Spark plan (no Blaze / Storage).
+/// Uses [uploadBytes] (not `dart:io` File) so Chrome / Flutter web works the
+/// same as mobile. Firebase Auth provider (custom / email / anonymous) does
+/// not affect Supabase uploads — only the anon key + bucket policies do.
 class MediaStorageService {
   MediaStorageService._();
 
@@ -31,11 +32,11 @@ class MediaStorageService {
     _initialized = true;
   }
 
-  /// Uploads [file] to `[SUPABASE_BUCKET]/[path]` and returns a public URL.
+  /// Uploads [bytes] to `[SUPABASE_BUCKET]/[path]` and returns a public URL.
   ///
   /// Throws [MediaStorageNotConfiguredException] when keys are missing.
-  static Future<String> uploadFile({
-    required File file,
+  static Future<String> uploadBytes({
+    required Uint8List bytes,
     required String path,
     String? contentType,
   }) async {
@@ -43,14 +44,17 @@ class MediaStorageService {
       throw MediaStorageNotConfiguredException();
     }
     if (!_initialized) await init();
+    if (bytes.isEmpty) {
+      throw Exception('Cannot upload an empty file.');
+    }
 
     final storage = Supabase.instance.client.storage.from(AppConfig.supabaseBucket);
     final objectPath = path.startsWith('/') ? path.substring(1) : path;
 
     try {
-      await storage.upload(
+      await storage.uploadBinary(
         objectPath,
-        file,
+        bytes,
         fileOptions: FileOptions(
           contentType: contentType ?? _guessContentType(objectPath),
           upsert: true,

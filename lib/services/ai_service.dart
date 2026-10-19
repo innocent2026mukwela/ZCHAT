@@ -18,8 +18,9 @@ class AiService {
   /// Clear message shown when the Node AI API is not reachable.
   static String get backendRequiredMessage =>
       'AI requires the ZCHAT backend at $_serverBase. '
-      'Start the API, or pass --dart-define=BACKEND_URL=… '
-      '(signing in alone does not enable AI).';
+      'Start the API with CORS allowing your Chrome origin '
+      '(e.g. http://localhost:*), pass --dart-define=BACKEND_URL=…, '
+      'and sign in again so the app has a non-anonymous Firebase ID token.';
 
   /// Lightweight reachability probe (cached ~20s). Does not throw.
   /// Any HTTP response (including 401/404) counts as reachable.
@@ -37,26 +38,34 @@ class AiService {
       return true;
     }
 
+    final probes = <Uri>[
+      Uri.parse('$_serverBase/api/health'),
+      Uri.parse('$_serverBase/health'),
+      Uri.parse('$_serverBase/'),
+    ];
+
+    for (final uri in probes) {
+      try {
+        await ping(uri);
+        _cachedReachable = true;
+        _cachedReachableAt = now;
+        return true;
+      } catch (_) {}
+    }
+
     try {
-      await ping(Uri.parse('$_serverBase/api/health'));
+      Map<String, String>? headers;
+      try {
+        headers = await _authHeaders(forceRefresh: true);
+      } catch (_) {}
+      await ping(Uri.parse('$_baseUrl/conversations'), headers: headers);
       _cachedReachable = true;
       _cachedReachableAt = now;
       return true;
     } catch (_) {
-      try {
-        Map<String, String>? headers;
-        try {
-          headers = await _authHeaders();
-        } catch (_) {}
-        await ping(Uri.parse('$_baseUrl/conversations'), headers: headers);
-        _cachedReachable = true;
-        _cachedReachableAt = now;
-        return true;
-      } catch (_) {
-        _cachedReachable = false;
-        _cachedReachableAt = now;
-        return false;
-      }
+      _cachedReachable = false;
+      _cachedReachableAt = now;
+      return false;
     }
   }
 
@@ -75,14 +84,31 @@ class AiService {
 
   static String friendlyError(Object error) {
     if (isConnectivityFailure(error)) return backendRequiredMessage;
-    return error.toString().replaceFirst('Exception: ', '');
+    final raw = error.toString().replaceFirst('Exception: ', '');
+    final lower = raw.toLowerCase();
+    if (lower.contains('anonymous') ||
+        lower.contains('sign_in_provider') ||
+        (lower.contains('unauthorized') && lower.contains('auth'))) {
+      return 'AI rejected this login token. Sign out and sign in again '
+          '(demo login now uses a non-anonymous Firebase user). '
+          'If it still fails, enable Email/Password in Firebase Console '
+          'or add POST /api/auth/demo-login on the Node API.';
+    }
+    return raw;
   }
 
   /// Fetches the current Firebase ID token and returns auth + content headers.
-  static Future<Map<String, String>> _authHeaders() async {
+  static Future<Map<String, String>> _authHeaders({
+    bool forceRefresh = false,
+  }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw Exception('Not authenticated');
-    final token = await user.getIdToken();
+    // DEMO_AUTH used to leave anonymous sessions; force-refresh after re-login
+    // so Node firebase-admin sees the current provider (custom / password).
+    final token = await user.getIdToken(forceRefresh);
+    if (token == null || token.isEmpty) {
+      throw Exception('Missing Firebase ID token. Sign out and sign in again.');
+    }
     return {
       'Content-Type':  'application/json',
       'Authorization': 'Bearer $token',

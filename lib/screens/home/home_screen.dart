@@ -205,7 +205,10 @@ class _ChatsTabState extends State<_ChatsTab> {
   void initState() {
     super.initState();
     if (AppConfig.demoAuth) {
-      DemoChatSeed.ensureSeeded();
+      // Await so a late auth restore still seeds; stream picks up new docs.
+      DemoChatSeed.ensureSeeded().then((_) {
+        if (mounted) setState(() {});
+      });
     }
   }
 
@@ -338,6 +341,32 @@ class _ChatsTabState extends State<_ChatsTab> {
             builder: (ctx, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4F8AFF)));
+              }
+
+              // Do not treat permission/query failures as an empty inbox
+              // (that hid demo-seed problems behind "No conversations yet").
+              if (snap.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.error_outline_rounded,
+                          size: 40, color: Colors.redAccent.withAlpha(180)),
+                      const SizedBox(height: 12),
+                      Text('Could not load chats',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: Colors.white.withAlpha(180),
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      Text('${snap.error}',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: Colors.white.withAlpha(100), fontSize: 12)),
+                    ]),
+                  ),
+                );
               }
 
               final all = snap.data ?? [];

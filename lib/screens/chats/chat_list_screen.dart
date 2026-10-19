@@ -66,7 +66,9 @@ class _ChatListScreenState extends State<ChatListScreen>
     });
     _loadLockedChats();
     if (AppConfig.demoAuth) {
-      DemoChatSeed.ensureSeeded();
+      DemoChatSeed.ensureSeeded().then((_) {
+        if (mounted) setState(() {});
+      });
     }
   }
 

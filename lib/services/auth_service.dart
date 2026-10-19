@@ -11,7 +11,10 @@ import '../config.dart';
 /// into Firebase Auth with a custom token.
 ///
 /// When [AppConfig.demoAuth] is true (default), OTP is generated locally (no
-/// Node backend) and sign-in uses Firebase Anonymous Auth + a Firestore profile.
+/// Node SMS) for a silent FYP login UX. Verification still prefers a **real**
+/// Firebase session (custom token from Node, else email/password per phone)
+/// so AI (`Bearer` ID token) and the rest of the app behave like the old
+/// verify-otp path — not Firebase Anonymous (which many backends reject).
 ///
 /// If demo auth is off but the Node OTP API is unreachable, [sendOtp] falls
 /// back to the same local OTP path so FYP device demos still work.
@@ -129,26 +132,24 @@ class AuthService {
     }
   }
 
-  /// Local path: any 6-digit code works. Signs in anonymously and writes a
-  /// user profile so the rest of the app can use [currentUser].
+  /// Local OTP UX: any 6-digit code works. Prefers a non-anonymous Firebase
+  /// user (custom token / email-password) so AI and other APIs keep working.
   static Future<Map<String, dynamic>> _verifyDemoOtp(
       String phoneNumber, String otp) async {
     if (!RegExp(r'^\d{6}$').hasMatch(otp)) {
       throw Exception('Enter a 6-digit code.');
     }
 
-    try {
-      await _auth.signInAnonymously();
-    } on FirebaseAuthException catch (e) {
-      debugPrint('[AuthService] Anonymous sign-in failed: ${e.code}');
-      throw Exception(
-        'Sign-in failed (${e.code}). '
-        'Enable Anonymous sign-in in the Firebase Console '
-        '(Authentication → Sign-in method → Anonymous).',
-      );
-    }
+    final phone = phoneNumber.isNotEmpty ? phoneNumber : (_demoPhone ?? '');
 
-    // Auth can succeed a tick before currentUser is non-null on web.
+    // 1) Restore the pre-DEMO_AUTH path when Node can mint a custom token.
+    final viaBackend = await _tryCustomTokenViaBackend(phone, otp);
+    if (viaBackend != null) return viaBackend;
+
+    // 2) Stable per-phone Firebase user (not anonymous) — ID tokens work with
+    //    typical Node firebase-admin auth middleware.
+    await _signInDemoAccount(phone);
+
     var user = _auth.currentUser;
     if (user == null) {
       try {
@@ -163,9 +164,160 @@ class AuthService {
         );
       }
     }
-    final uid = user!.uid;
-    final phone = phoneNumber.isNotEmpty ? phoneNumber : (_demoPhone ?? '');
 
+    // Fresh token so the first AI call after login is not stale/anonymous.
+    try {
+      await user!.getIdToken(true);
+    } catch (e) {
+      debugPrint('[AuthService] getIdToken refresh skipped: $e');
+    }
+
+    return _upsertDemoProfile(uid: user!.uid, phone: phone);
+  }
+
+  /// Tries Node custom-token login without requiring SMS.
+  ///
+  /// Order: `POST /api/auth/demo-login` → `POST /api/auth/verify-otp` (for
+  /// backends that accept any OTP in demo/dev). Returns null if Node is down
+  /// or rejects the request so local Firebase sign-in can continue.
+  static Future<Map<String, dynamic>?> _tryCustomTokenViaBackend(
+    String phoneNumber,
+    String otp,
+  ) async {
+    if (phoneNumber.isEmpty) return null;
+
+    try {
+      final demoRes = await http
+          .post(
+            Uri.parse('$_baseUrl/demo-login'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'phoneNumber': phoneNumber}),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (demoRes.statusCode == 200) {
+        debugPrint('[AuthService] Signed in via /api/auth/demo-login');
+        return await _completeCustomTokenResponse(demoRes, phoneNumber);
+      }
+    } catch (e) {
+      debugPrint('[AuthService] demo-login unavailable: $e');
+    }
+
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$_baseUrl/verify-otp'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'phoneNumber': phoneNumber, 'otp': otp}),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        debugPrint(
+          '[AuthService] Signed in via /api/auth/verify-otp (demo OTP accepted)',
+        );
+        return await _completeCustomTokenResponse(res, phoneNumber);
+      }
+    } catch (e) {
+      debugPrint('[AuthService] backend verify-otp skip: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>> _completeCustomTokenResponse(
+    http.Response res,
+    String phoneNumber,
+  ) async {
+    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    final token = json['firebaseToken'] as String?;
+    if (token == null || token.isEmpty) {
+      throw Exception('Backend login response missing firebaseToken.');
+    }
+    await _auth.signInWithCustomToken(token);
+    try {
+      await _auth.currentUser?.getIdToken(true);
+    } catch (_) {}
+
+    final uid = _auth.currentUser!.uid;
+    final backendUser = json['user'] as Map<String, dynamic>?;
+    final phone = backendUser?['phone_number'] as String? ?? phoneNumber;
+
+    final profile = await _upsertDemoProfile(uid: uid, phone: phone);
+    // Prefer backend needsProfile when provided.
+    if (json.containsKey('needsProfile')) {
+      return {
+        'uid': uid,
+        'needsProfile': json['needsProfile'] == true,
+      };
+    }
+    return profile;
+  }
+
+  /// Email/password demo account keyed by phone digits (stable uid across
+  /// restarts). Falls back to Anonymous only if Email/Password is disabled.
+  static Future<void> _signInDemoAccount(String phoneNumber) async {
+    final digits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+    final email = 'demo_${digits.isEmpty ? 'user' : digits}@zchat.demo';
+    final password = 'ZchatDemo!${digits.isEmpty ? '000000' : digits}';
+
+    // Drop a previous anonymous session so we do not stay on a rejected provider.
+    final existing = _auth.currentUser;
+    if (existing != null && existing.isAnonymous) {
+      try {
+        await _auth.signOut();
+      } catch (_) {}
+    }
+
+    try {
+      await _auth.signInWithEmailAndPassword(email: email, password: password);
+      return;
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'user-not-found' ||
+          e.code == 'invalid-credential' ||
+          e.code == 'wrong-password' ||
+          e.code == 'invalid-login-credentials') {
+        try {
+          await _auth.createUserWithEmailAndPassword(
+            email: email,
+            password: password,
+          );
+          return;
+        } on FirebaseAuthException catch (createErr) {
+          if (createErr.code == 'email-already-in-use') {
+            await _auth.signInWithEmailAndPassword(
+              email: email,
+              password: password,
+            );
+            return;
+          }
+          debugPrint(
+            '[AuthService] Email/password demo create failed: ${createErr.code}',
+          );
+        }
+      } else if (e.code == 'operation-not-allowed') {
+        debugPrint(
+          '[AuthService] Email/Password disabled in Firebase Console — '
+          'falling back to Anonymous (AI may reject this token).',
+        );
+      } else {
+        debugPrint('[AuthService] Email/password demo sign-in: ${e.code}');
+      }
+    }
+
+    try {
+      await _auth.signInAnonymously();
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[AuthService] Anonymous sign-in failed: ${e.code}');
+      throw Exception(
+        'Sign-in failed (${e.code}). '
+        'Enable Email/Password (recommended) or Anonymous in Firebase Console '
+        '(Authentication → Sign-in method).',
+      );
+    }
+  }
+
+  static Future<Map<String, dynamic>> _upsertDemoProfile({
+    required String uid,
+    required String phone,
+  }) async {
     await _ensureFirestoreOnline();
 
     Map<String, dynamic>? existingData;
@@ -182,7 +334,6 @@ class AuthService {
       if (!_isFirestoreOffline(e)) {
         throw Exception(_friendlyFirestoreError(e));
       }
-      // Offline get: try cache, else treat as new profile (do not hang login).
       debugPrint('[AuthService] Profile get offline — trying cache: $e');
       try {
         final cached = await _db.collection('users').doc(uid).get(

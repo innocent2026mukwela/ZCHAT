@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../utils/storage_errors.dart';
@@ -8,7 +9,13 @@ class StatusService {
   static final _db   = FirebaseFirestore.instance;
   static final _auth = FirebaseAuth.instance;
 
-  static String get _myUid => _auth.currentUser!.uid;
+  static String get _myUid {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw Exception('Not signed in. Enter the verification code again.');
+    }
+    return user.uid;
+  }
 
   // ── Post a status ─────────────────────────────────────────────────────────
 
@@ -29,14 +36,15 @@ class StatusService {
     });
   }
 
-  static Future<void> postImageStatus(String filePath, {String? caption}) async {
+  /// Uploads a status photo from bytes (works on Chrome + mobile).
+  static Future<void> postImageBytes(Uint8List bytes, {String? caption}) async {
     final now     = DateTime.now();
     final expires = now.add(const Duration(hours: 24));
 
     late final String url;
     try {
-      url = await MediaStorageService.uploadFile(
-        file: File(filePath),
+      url = await MediaStorageService.uploadBytes(
+        bytes: bytes,
         path: 'status/$_myUid/${now.millisecondsSinceEpoch}.jpg',
         contentType: 'image/jpeg',
       );
@@ -58,13 +66,13 @@ class StatusService {
     });
   }
 
-  /// Uploads a short status video and creates the Firestore item.
-  static Future<void> postVideoFile(String filePath, {String? caption}) async {
+  /// Uploads a short status video from bytes and creates the Firestore item.
+  static Future<void> postVideoBytes(Uint8List bytes, {String? caption}) async {
     final now = DateTime.now();
     late final String url;
     try {
-      url = await MediaStorageService.uploadFile(
-        file: File(filePath),
+      url = await MediaStorageService.uploadBytes(
+        bytes: bytes,
         path: 'status/$_myUid/${now.millisecondsSinceEpoch}.mp4',
         contentType: 'video/mp4',
       );

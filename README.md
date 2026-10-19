@@ -18,11 +18,15 @@ flutter pub get
 
 ## Run
 
-### Chrome (local backend)
+### Chrome (demo OTP + local AI + status media)
 
 ```bash
-flutter run -d chrome --dart-define=BACKEND_URL=http://localhost:5000
+flutter run -d chrome --dart-define-from-file=dart_defines.demo.json ^
+  --dart-define=SUPABASE_URL=https://YOUR_PROJECT.supabase.co ^
+  --dart-define=SUPABASE_ANON_KEY=YOUR_ANON_KEY
 ```
+
+`dart_defines.demo.json` sets `DEMO_AUTH=true` and `BACKEND_URL=http://localhost:5000`. After upgrading from the old anonymous demo login, **sign out once and sign in again** so AI gets a fresh non-anonymous ID token.
 
 ### Android emulator
 
@@ -95,9 +99,18 @@ See `lib/config.dart`. All environment overrides use `--dart-define`:
 - **Student** → `/home` after OTP (or profile setup)
 - **Lecturer** → `/lecturer/home` after OTP (or profile setup)
 
-## Demo auth (no Node OTP backend)
+## Demo auth (silent local OTP — keeps AI / media working)
 
-Demo mode is **on by default** (`DEMO_AUTH=true`). Login shows a local OTP; any 6-digit code signs in with Firebase Anonymous Auth and writes a searchable `users/{uid}` profile (`phoneNumber`, `fullName`, `demo: true`).
+Demo mode is **on by default** (`DEMO_AUTH=true`). Login shows a local verification code; any 6-digit code works. **This is not Anonymous-only anymore** (Anonymous broke AI when Node rejects `sign_in_provider=anonymous`).
+
+On verify, the app tries in order:
+
+1. `POST /api/auth/demo-login` `{ phoneNumber }` → `firebaseToken` (best — same custom-token path as real OTP)
+2. `POST /api/auth/verify-otp` with the entered code (works if your Node demo/dev mode accepts any OTP)
+3. Firebase **Email/Password** account `demo_<digits>@zchat.demo` (stable uid per phone — enable Email/Password in Firebase Console)
+4. Firebase Anonymous (last resort; AI may still fail if Node blocks anonymous tokens)
+
+Firestore rules already allow any signed-in user (`request.auth != null`), including demo accounts. Media still uses **Supabase** (not Firebase Storage).
 
 **1:1 chat between two demo accounts**
 
@@ -107,6 +120,35 @@ Demo mode is **on by default** (`DEMO_AUTH=true`). Login shows a local OTP; any 
 4. Contact discovery does **not** need the Node backend in demo mode (Firestore lookup).
 
 Turn demo auth off for real OTP: `--dart-define=DEMO_AUTH=false`.
+
+### Node backend (lives outside this Flutter repo)
+
+ZCHAT-main has **no** `backend/` folder. On Innocent’s PC the API is usually under a separate “FINAL YEAR PROJECT” / Node folder. For Chrome + DEMO_AUTH:
+
+**CORS** — allow the Flutter web origin (not only `*`'s credentials mode). Example Express:
+
+```js
+app.use(cors({
+  origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+```
+
+**AI env (server `.env`)** — typical:
+
+```
+ANTHROPIC_API_KEY=...          # or your Claude/OpenAI key name
+FIREBASE_PROJECT_ID=...
+GOOGLE_APPLICATION_CREDENTIALS=./serviceAccount.json
+# Optional if you add the route the Flutter client calls first:
+# DEMO_LOGIN=true
+```
+
+**Recommended Node route** (restores old custom-token login without SMS):
+
+`POST /api/auth/demo-login` body `{ "phoneNumber": "+260…" }` → `{ "firebaseToken", "needsProfile", "user" }` using Firebase Admin `createCustomToken`.
+
+Do **not** reject `sign_in_provider === 'anonymous'` without also supporting password/custom — or require Email/Password / demo-login above.
 
 ## Supabase Storage (media uploads)
 
@@ -174,7 +216,7 @@ flutter build apk --debug \
 
 ## AI assistant
 
-AI features call the Node backend (`BACKEND_URL`). With demo auth and no API running, AI screens show **“AI requires backend”** instead of spinning forever. Start the API (or point `BACKEND_URL` at a live server) for the real path.
+AI features call the Node backend (`BACKEND_URL`) with the Firebase ID token. With no API running (or CORS blocking Chrome), AI screens show **“AI requires backend”**. Start the API, allow localhost Chrome origins, and use the demo login path above so the token is not Anonymous-only.
 
 ## Notes
 

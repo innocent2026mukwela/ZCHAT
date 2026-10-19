@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../utils/storage_errors.dart';
@@ -317,11 +319,31 @@ class ChatService {
 
   static Future<void> sendImage(String chatId, File imageFile,
       {String caption = '', bool viewOnce = false}) async {
-    final ext  = imageFile.path.split('.').last;
-    final path = 'chat_images/$chatId/${DateTime.now().millisecondsSinceEpoch}.$ext';
+    final ext = imageFile.path.contains('.')
+        ? imageFile.path.split('.').last
+        : 'jpg';
+    await sendImageBytes(
+      chatId,
+      await imageFile.readAsBytes(),
+      ext: ext,
+      caption: caption,
+      viewOnce: viewOnce,
+    );
+  }
+
+  /// Web-safe image send (use with [XFile.readAsBytes]).
+  static Future<void> sendImageBytes(
+    String chatId,
+    Uint8List bytes, {
+    String ext = 'jpg',
+    String caption = '',
+    bool viewOnce = false,
+  }) async {
+    final path =
+        'chat_images/$chatId/${DateTime.now().millisecondsSinceEpoch}.$ext';
     late final String url;
     try {
-      url = await MediaStorageService.uploadFile(file: imageFile, path: path);
+      url = await MediaStorageService.uploadBytes(bytes: bytes, path: path);
     } catch (e) {
       throw Exception(friendlyStorageError(e));
     }

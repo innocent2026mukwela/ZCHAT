@@ -120,8 +120,8 @@ class PapersService {
     final file = File(filePath);
     late final String fileUrl;
     try {
-      fileUrl = await MediaStorageService.uploadFile(
-        file: file,
+      fileUrl = await MediaStorageService.uploadBytes(
+        bytes: await file.readAsBytes(),
         path: 'papers/$courseId/${year}_S${semester}_${DateTime.now().millisecondsSinceEpoch}.pdf',
         contentType: 'application/pdf',
       );

@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -156,8 +155,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (picked == null || !mounted) return;
     setState(() => _uploadingPhoto = true);
     try {
-      final url = await MediaStorageService.uploadFile(
-        file: File(picked.path),
+      final url = await MediaStorageService.uploadBytes(
+        bytes: await picked.readAsBytes(),
         path: 'avatars/${_user!.uid}/profile.jpg',
         contentType: 'image/jpeg',
       );

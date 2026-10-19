@@ -800,7 +800,9 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
     if (picked == null || !mounted) return;
     setState(() => _posting = true);
     try {
-      await StatusService.postImageStatus(picked.path, caption: _ctrl.text.trim());
+      // readAsBytes works on Chrome (blob paths) and mobile — do not use File(path).
+      final bytes = await picked.readAsBytes();
+      await StatusService.postImageBytes(bytes, caption: _ctrl.text.trim());
       if (mounted) { Navigator.pop(context); widget.onDone(); }
     } catch (e) {
       if (mounted) {
@@ -819,7 +821,8 @@ class _AddStatusSheetState extends State<_AddStatusSheet> {
     if (picked == null || !mounted) return;
     setState(() => _posting = true);
     try {
-      await StatusService.postVideoFile(picked.path, caption: _ctrl.text.trim());
+      final bytes = await picked.readAsBytes();
+      await StatusService.postVideoBytes(bytes, caption: _ctrl.text.trim());
       if (mounted) { Navigator.pop(context); widget.onDone(); }
     } catch (e) {
       if (mounted) {

@@ -135,14 +135,17 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _pickDocument() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
+      withData: true, // needed on Chrome where path is null
       allowedExtensions: ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt'],
     );
     if (result == null || result.files.isEmpty) return;
     final file = result.files.first;
-    if (file.path == null) return;
+    final bytes = file.bytes ??
+        (file.path != null ? await File(file.path!).readAsBytes() : null);
+    if (bytes == null) return;
     try {
-      final url = await MediaStorageService.uploadFile(
-        file: File(file.path!),
+      final url = await MediaStorageService.uploadBytes(
+        bytes: bytes,
         path: 'chat_docs/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}_${file.name}',
       );
       await ChatService.sendMessage(
@@ -167,12 +170,20 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _pickImage({ImageSource source = ImageSource.gallery}) async {
     final picked = await ImagePicker().pickImage(source: source, imageQuality: 75);
     if (picked == null || !mounted) return;
-    final result = await _showCaptionSheet(File(picked.path));
+    final bytes = await picked.readAsBytes();
+    final result = await _showCaptionSheetBytes(bytes);
     if (result == null) return;
     try {
-      await ChatService.sendImage(widget.chatId, File(picked.path),
-          caption: result['caption'] as String? ?? '',
-          viewOnce: result['viewOnce'] as bool? ?? false);
+      final ext = picked.name.contains('.')
+          ? picked.name.split('.').last
+          : 'jpg';
+      await ChatService.sendImageBytes(
+        widget.chatId,
+        bytes,
+        ext: ext,
+        caption: result['caption'] as String? ?? '',
+        viewOnce: result['viewOnce'] as bool? ?? false,
+      );
       Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
     } catch (e) {
       if (mounted) {
@@ -191,10 +202,9 @@ class _ChatScreenState extends State<ChatScreen>
         maxDuration: const Duration(minutes: 10));
     if (picked == null || !mounted) return;
     try {
-      final file = File(picked.path);
       final fileName = picked.name;
-      final url = await MediaStorageService.uploadFile(
-        file: file,
+      final url = await MediaStorageService.uploadBytes(
+        bytes: await picked.readAsBytes(),
         path: 'chat_videos/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}_$fileName',
       );
       await ChatService.sendMessage(
@@ -661,7 +671,7 @@ class _ChatScreenState extends State<ChatScreen>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
   // Caption sheet shown before sending an image — returns {caption, viewOnce}
-  Future<Map<String, dynamic>?> _showCaptionSheet(File imageFile) {
+  Future<Map<String, dynamic>?> _showCaptionSheetBytes(Uint8List bytes) {
     final ctrl = TextEditingController();
     bool viewOnce = false;
     return showModalBottomSheet<Map<String, dynamic>>(
@@ -682,7 +692,7 @@ class _ChatScreenState extends State<ChatScreen>
                 ClipRRect(
                   borderRadius:
                       const BorderRadius.vertical(top: Radius.circular(22)),
-                  child: Image.file(imageFile,
+                  child: Image.memory(bytes,
                       height: 280,
                       width: double.infinity,
                       fit: BoxFit.cover),
@@ -951,8 +961,8 @@ class _ChatScreenState extends State<ChatScreen>
     final dur = '${(s ~/ 60).toString().padLeft(1, '0')}:${(s % 60).toString().padLeft(2, '0')}';
 
     try {
-      final url = await MediaStorageService.uploadFile(
-        file: File(path),
+      final url = await MediaStorageService.uploadBytes(
+        bytes: await File(path).readAsBytes(),
         path: 'voice_notes/${widget.chatId}/${DateTime.now().millisecondsSinceEpoch}.m4a',
         contentType: 'audio/mp4',
       );

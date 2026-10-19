@@ -12,12 +12,15 @@ import 'package:flutter/foundation.dart';
 /// Zego / Tenor credentials must be supplied via dart-define — no production
 /// secrets are baked into source defaults.
 ///
-/// Local auth (no Node backend required) — preferred for FYP phone demos:
+/// Local auth UX (no Node SMS) — preferred for FYP demos:
 ///
 ///   Default ON — OTP is generated locally (shown as a session code in OTP UI).
-///   Profiles are marked `demo: true` and discoverable via New Chat suggested contacts.
-///   Phone demo (no LAN Node needed):
-///     `flutter run --dart-define=DEMO_AUTH=true`
+///   Sign-in prefers a **non-anonymous** Firebase user (Node custom token via
+///   `/api/auth/demo-login` or verify-otp, else email/password per phone) so AI
+///   ID tokens match the old real-auth path. Anonymous is last-resort only.
+///   Profiles are marked `demo: true` and discoverable via New Chat peers.
+///   Phone demo:
+///     `flutter run --dart-define-from-file=dart_defines.demo.json`
 ///   Turn off for real backend OTP:
 ///     `flutter run --dart-define=DEMO_AUTH=false --dart-define=BACKEND_URL=http://PC_LAN_IP:5000`
 ///
