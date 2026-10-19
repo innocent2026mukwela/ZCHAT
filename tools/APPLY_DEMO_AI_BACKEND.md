@@ -2,7 +2,7 @@
 
 Flutter shows **AI requires backend** when Chrome cannot reach Node on port 5000 **or** CORS blocks the request. Auth (401) alone does **not** trigger that home-screen message.
 
-Backend folder (on your PC):
+Backend folder (on **Innocent’s** PC only):
 
 `C:\Users\TINOTECH\Desktop\FINAL YEAR PROJECT\unza-z-chat-backend`
 
@@ -10,6 +10,26 @@ Flutter folder:
 
 `C:\Users\user\Desktop\ZCHAT-main`  
 (or wherever you cloned `innocent2026mukwela/ZCHAT`)
+
+### Why Cursor on Ruth’s PC cannot do Step 1 / edit `server.js`
+
+That backend path is under **Innocent’s Windows user** (`C:\Users\TINOTECH\...`). Ruth’s machine has no `TINOTECH` profile and **no** `unza-z-chat-backend` clone — ZCHAT-main is Flutter-only. Cursor can only edit files that exist on the local disk, so CORS must be fixed **on the PC that runs Node**.
+
+### One-command CORS auto-fix (run on Innocent’s PC)
+
+After `git pull` in the ZCHAT clone:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\fix_backend_cors.ps1
+```
+
+That backs up `server.js`, allows `localhost` / `127.0.0.1` on **any port**, stops throwing `Not allowed by CORS` (which becomes HTTP 500), and copies the demo-auth helper. Custom path:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\fix_backend_cors.ps1 -BackendRoot "D:\path\to\unza-z-chat-backend"
+```
+
+Manual paste alternative: [`tools/server_cors_dropin.js`](server_cors_dropin.js).
 
 ---
 

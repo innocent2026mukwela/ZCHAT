@@ -119,7 +119,15 @@ Turn demo auth off for real OTP: `--dart-define=DEMO_AUTH=false`.
 
 ### Node backend (lives outside this Flutter repo)
 
-ZCHAT-main has **no** `backend/` folder. **Innocent:** follow the 5 PowerShell steps in [`tools/APPLY_DEMO_AI_BACKEND.md`](tools/APPLY_DEMO_AI_BACKEND.md).
+ZCHAT-main has **no** `backend/` folder. The API is on Innocent’s PC only (`C:\Users\TINOTECH\Desktop\FINAL YEAR PROJECT\unza-z-chat-backend`). Cursor on Ruth’s PC **cannot** edit that `server.js` — different Windows user / machine.
+
+**Innocent — one-command CORS fix** (after `git pull`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\fix_backend_cors.ps1
+```
+
+Full 5-step guide: [`tools/APPLY_DEMO_AI_BACKEND.md`](tools/APPLY_DEMO_AI_BACKEND.md). Drop-in paste: [`tools/server_cors_dropin.js`](tools/server_cors_dropin.js).
 
 Helper: [`tools/backend_accept_demo_auth.js`](tools/backend_accept_demo_auth.js) exports `corsOptions` + `demoAuthMiddleware(admin)`.
 
