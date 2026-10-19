@@ -29,6 +29,10 @@
  *      app.use(cors(corsOptions));
  *      app.options('*', cors(corsOptions)); // preflight for Chrome
  *
+ *    If you already have cors({ origin: function... }) that throws
+ *    Error('Not allowed by CORS') → replace that origin fn with corsOptions.origin
+ *    (never throw; use callback(null, true) for localhost).
+ *
  * 4) Auth middleware — REPLACE any block that rejects anonymous, e.g.:
  *
  *      // BAD:
@@ -53,11 +57,27 @@
 
 'use strict';
 
-/** CORS options Flutter Chrome + DEMO_AUTH need. */
+/**
+ * CORS options Flutter Chrome + DEMO_AUTH need.
+ * IMPORTANT: never callback(new Error(...)) — that becomes HTTP 500 and
+ * Chrome reports "No Access-Control-Allow-Origin" on the preflight.
+ */
 const corsOptions = {
-  origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
+  origin: function (origin, callback) {
+    // No Origin (curl / same-origin), any localhost/127.0.0.1 port, or file://
+    if (
+      !origin ||
+      origin === 'null' ||
+      origin.startsWith('file://') ||
+      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+    ) {
+      return callback(null, true);
+    }
+    // Quiet deny — do not throw
+    return callback(null, false);
+  },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-ZChat-Demo-Auth'],
+  allowedHeaders: ['Authorization', 'Content-Type', 'X-ZChat-Demo-Auth'],
   // credentials: false — Flutter http does not need cookies for AI
 };
 

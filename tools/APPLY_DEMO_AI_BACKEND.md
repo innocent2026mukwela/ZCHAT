@@ -46,6 +46,44 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 ```
 
+### 30-second fix (CORS origin ONLY — no middleware copy)
+
+If Node logs `Not allowed by CORS` on `OPTIONS` with **status 500** at `server.js` ~line 38, your `origin` callback is **throwing**. Replace **only** the `origin:` function inside `cors({ ... })` with this (do **not** use `callback(new Error(...))`):
+
+```js
+origin: function (origin, callback) {
+  if (!origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    return callback(null, true);
+  }
+  callback(null, false); // or true in development
+}
+```
+
+Full drop-in `cors` block (methods + headers Flutter needs):
+
+```js
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (
+        !origin ||
+        origin === 'null' ||
+        origin.startsWith('file://') ||
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, false); // never throw — throw becomes 500
+    },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'X-ZChat-Demo-Auth'],
+  })
+);
+app.options('*', cors()); // or reuse the same options object
+```
+
+Then restart: `npm start`. Flutter on `http://localhost:9030` → API on `:5000` will pass preflight.
+
 **Auth** — after `admin` is initialized, protect AI routes (and remove any `sign_in_provider === 'anonymous'` → 401):
 
 ```js
