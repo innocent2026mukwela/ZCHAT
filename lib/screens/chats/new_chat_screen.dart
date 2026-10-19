@@ -270,11 +270,22 @@ class _NewChatScreenState extends State<NewChatScreen> {
   }
 
   Future<void> _openChat(String uid, String name) async {
-    final chatId = await ChatService.getOrCreateChat(uid);
-    if (!mounted) return;
-    context.pushReplacement(
-      '/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(name)}',
-    );
+    try {
+      final chatId = await ChatService.getOrCreateChat(uid);
+      if (!mounted) return;
+      context.pushReplacement(
+        '/chats/${Uri.encodeComponent(chatId)}?name=${Uri.encodeComponent(name)}',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+          'Could not open chat: ${e.toString().replaceFirst("Exception: ", "")}',
+        ),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
   }
 
   // ── New contact (native) ──────────────────────────────────────────────────

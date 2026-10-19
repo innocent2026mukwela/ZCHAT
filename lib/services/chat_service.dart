@@ -46,30 +46,51 @@ class ChatService {
     final chatId = ids.join('_');
 
     final ref = _db.collection('chats').doc(chatId);
-    final snap = await ref.get();
-    if (!snap.exists) {
+
+    // Missing-doc GET can be permission-denied under older rules; treat that
+    // as "does not exist" so New Chat still opens for on-ZCHAT peers.
+    DocumentSnapshot<Map<String, dynamic>>? snap;
+    try {
+      snap = await ref.get();
+    } on FirebaseException catch (e) {
+      if (e.code != 'permission-denied') rethrow;
+      snap = null;
+    }
+
+    if (snap == null || !snap.exists) {
       final myDoc    = await _db.collection('users').doc(_myUid).get();
       final otherDoc = await _db.collection('users').doc(otherUid).get();
-      if (!otherDoc.exists) throw Exception('This user no longer has an active account.');
+      if (!otherDoc.exists) {
+        throw Exception('This user no longer has an active account.');
+      }
       final myName    = myDoc.data()?['fullName']    as String?
                      ?? myDoc.data()?['displayName'] as String? ?? 'Unknown';
       final otherName = otherDoc.data()?['fullName']    as String?
                      ?? otherDoc.data()?['displayName'] as String? ?? 'Unknown';
 
-      await ref.set({
-        'id': chatId,
-        'type': 'direct',
-        'members': ids,
-        'memberUids': ids,
-        'memberNames': {_myUid: myName, otherUid: otherName},
-        'name': '',
-        'lastMessage': '',
-        'lastSenderUid': '',
-        'lastTime': FieldValue.serverTimestamp(),
-        'unreadCount': {_myUid: 0, otherUid: 0},
-        'pinned': false,
-        'archived': {_myUid: false, otherUid: false},
-      });
+      try {
+        await ref.set({
+          'id': chatId,
+          'type': 'direct',
+          'members': ids,
+          'memberUids': ids,
+          'memberNames': {_myUid: myName, otherUid: otherName},
+          'name': '',
+          'lastMessage': '',
+          'lastSenderUid': '',
+          'lastTime': FieldValue.serverTimestamp(),
+          'unreadCount': {_myUid: 0, otherUid: 0},
+          'pinned': false,
+          'archived': {_myUid: false, otherUid: false},
+        });
+      } on FirebaseException catch (e) {
+        // Race: peer created the same direct chat — retry read once.
+        if (e.code == 'permission-denied' || e.code == 'already-exists') {
+          final again = await ref.get();
+          if (again.exists) return chatId;
+        }
+        rethrow;
+      }
     }
     return chatId;
   }
