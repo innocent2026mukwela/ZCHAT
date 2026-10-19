@@ -57,16 +57,30 @@ If you already have an auth middleware, either replace it with `requireAuth` on 
 
 ---
 
-## Step 3 — Backend `.env`
+## Step 3 — Backend `.env` (Gemini / Google AI Studio)
+
+This project’s AI replies go through the **Node** backend to **Google Gemini** (free tier / AI Studio).  
+ZCHAT-main (Flutter) does **not** call Gemini or Anthropic directly — it only POSTs to `http://localhost:5000/api/ai/...`.
 
 In the backend root `.env` add (keep your existing Firebase lines):
 
 ```env
 ALLOW_DEMO_AUTH=true
-ANTHROPIC_API_KEY=sk-ant-YOUR_REAL_KEY
+GEMINI_API_KEY=your-google-ai-studio-key
 ```
 
-`ANTHROPIC_API_KEY` is required for AI **replies**. Without it, health/CORS can pass but chat returns an API-key error.
+Get a free key: [Google AI Studio](https://aistudio.google.com/apikey).
+
+**Do not use `ANTHROPIC_API_KEY`** unless your `server.js` explicitly reads that name (this team’s stack is Gemini).
+
+If chat still says the API key is missing after setting `GEMINI_API_KEY`, check what your backend actually reads:
+
+```powershell
+cd "C:\Users\TINOTECH\Desktop\FINAL YEAR PROJECT\unza-z-chat-backend"
+Select-String -Path .\server.js,.\routes\*.js,.\*.js -Pattern 'process\.env\.(GEMINI|GOOGLE|API_KEY)' -ErrorAction SilentlyContinue
+```
+
+Some Node samples also accept `GOOGLE_API_KEY` as an alias — only add that if the grep above shows it.
 
 ---
 
@@ -99,7 +113,7 @@ Or with the demo defines file (if present):
 flutter run -d chrome --dart-define-from-file=dart_defines.demo.json
 ```
 
-Open the **AI** tab → should load (not “AI requires backend”). Then send a message to confirm `ANTHROPIC_API_KEY` works.
+Open the **AI** tab → should load (not “AI requires backend”). Then send a message to confirm `GEMINI_API_KEY` works.
 
 ---
 
@@ -109,4 +123,4 @@ Open the **AI** tab → should load (not “AI requires backend”). Then send a
 |--------|--------|
 | Still “AI requires backend” | Node not on 5000, or CORS origin/headers wrong — DevTools Network will show failed/CORS |
 | AI opens but chat says auth rejected | Middleware not applied / still rejecting anonymous — re-check Step 2 |
-| Auth OK but no reply | Missing `ANTHROPIC_API_KEY` in backend `.env` |
+| Auth OK but no reply | Missing or wrong Gemini env var — set `GEMINI_API_KEY` (or the exact name `process.env` uses in `server.js`) |

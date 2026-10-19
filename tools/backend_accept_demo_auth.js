@@ -42,10 +42,11 @@
  *      // if (!user) return res.status(401).json({ error: 'Unauthorized' });
  *      // req.user = user; next();
  *
- * 5) Backend .env (same folder as server.js):
+ * 5) Backend .env (same folder as server.js) — Gemini free tier / AI Studio:
  *      ALLOW_DEMO_AUTH=true
- *      ANTHROPIC_API_KEY=sk-ant-...     # required for AI chat replies
- *      # (or whatever Claude key name your routes already read)
+ *      GEMINI_API_KEY=...     # required for AI chat replies (Google Generative AI)
+ *      # Some samples also read GOOGLE_API_KEY — only if your server.js does.
+ *      # Not Anthropic: do not set ANTHROPIC_API_KEY unless server.js reads it.
  *
  * 6) Restart: npm start   (listen on port 5000)
  */

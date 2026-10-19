@@ -130,16 +130,16 @@ app.options('*', cors(corsOptions));
 app.use('/api/ai', demoAuthMiddleware(admin)); // do NOT reject anonymous
 ```
 
-**AI env (server `.env`)**:
+**AI env (server `.env`) — Google Gemini (AI Studio free tier)**:
 
 ```
-ANTHROPIC_API_KEY=...
+GEMINI_API_KEY=...
 ALLOW_DEMO_AUTH=true
 FIREBASE_PROJECT_ID=...
 GOOGLE_APPLICATION_CREDENTIALS=./serviceAccount.json
 ```
 
-Without `ANTHROPIC_API_KEY` (or your Claude key), the API will answer auth/health but AI chat replies will fail.
+Flutter talks only to `/api/ai` on the Node server; the server calls Gemini with `GEMINI_API_KEY`. Without that key (or whatever name your `server.js` reads, e.g. `GOOGLE_API_KEY`), health/auth can pass but AI chat replies fail. This repo does **not** use `ANTHROPIC_API_KEY`.
 
 The Flutter AI home screen (“AI requires backend”) means **connection or CORS failed** — not 401. Auth rejection shows a different message after you try to chat.
 
