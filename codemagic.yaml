@@ -82,6 +82,13 @@ workflows:
         - supabase
       flutter: 3.41.8
 
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+
     scripts:
       - name: Get Flutter packages
         script: flutter pub get
