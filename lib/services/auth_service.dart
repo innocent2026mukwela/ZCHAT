@@ -8,13 +8,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../config.dart';
 
 /// Handles authentication via the ZCHAT backend's OTP endpoints, bridging
-/// into Firebase Auth with a custom token.
+/// into Firebase Auth with a custom token when available.
 ///
 /// When [AppConfig.demoAuth] is true (default), OTP is generated locally (no
-/// Node SMS) for a silent FYP login UX. Verification still prefers a **real**
-/// Firebase session (custom token from Node, else email/password per phone)
-/// so AI (`Bearer` ID token) and the rest of the app behave like the old
-/// verify-otp path — not Firebase Anonymous (which many backends reject).
+/// Node SMS). Verify order: Node custom token → **Firebase Anonymous** (stable
+/// uid). Email/Password is not used. AI sends `X-ZChat-Demo-Auth: 1` so Node
+/// can accept anonymous tokens (see tools/backend_accept_demo_auth.js).
 ///
 /// If demo auth is off but the Node OTP API is unreachable, [sendOtp] falls
 /// back to the same local OTP path so FYP device demos still work.
@@ -132,8 +131,12 @@ class AuthService {
     }
   }
 
-  /// Local OTP UX: any 6-digit code works. Prefers a non-anonymous Firebase
-  /// user (custom token / email-password) so AI and other APIs keep working.
+  /// Local OTP UX: any 6-digit code works.
+  ///
+  /// Order: Node custom token (if API up) → **Firebase Anonymous** (stable).
+  /// Email/Password is intentionally skipped — FYP Firebase projects often
+  /// lack owner permission to enable it, and forcing that path signed users
+  /// out of a working anonymous session.
   static Future<Map<String, dynamic>> _verifyDemoOtp(
       String phoneNumber, String otp) async {
     if (!RegExp(r'^\d{6}$').hasMatch(otp)) {
@@ -142,13 +145,12 @@ class AuthService {
 
     final phone = phoneNumber.isNotEmpty ? phoneNumber : (_demoPhone ?? '');
 
-    // 1) Restore the pre-DEMO_AUTH path when Node can mint a custom token.
+    // 1) Custom token when Node is reachable (best for production-like AI).
     final viaBackend = await _tryCustomTokenViaBackend(phone, otp);
     if (viaBackend != null) return viaBackend;
 
-    // 2) Stable per-phone Firebase user (not anonymous) — ID tokens work with
-    //    typical Node firebase-admin auth middleware.
-    await _signInDemoAccount(phone);
+    // 2) Anonymous — keep existing anon uid so sample chats stay attached.
+    await _signInAnonymouslyStable();
 
     var user = _auth.currentUser;
     if (user == null) {
@@ -165,7 +167,6 @@ class AuthService {
       }
     }
 
-    // Fresh token so the first AI call after login is not stale/anonymous.
     try {
       await user!.getIdToken(true);
     } catch (e) {
@@ -251,65 +252,31 @@ class AuthService {
     return profile;
   }
 
-  /// Email/password demo account keyed by phone digits (stable uid across
-  /// restarts). Falls back to Anonymous only if Email/Password is disabled.
-  static Future<void> _signInDemoAccount(String phoneNumber) async {
-    final digits = phoneNumber.replaceAll(RegExp(r'\D'), '');
-    final email = 'demo_${digits.isEmpty ? 'user' : digits}@zchat.demo';
-    final password = 'ZchatDemo!${digits.isEmpty ? '000000' : digits}';
-
-    // Drop a previous anonymous session so we do not stay on a rejected provider.
+  /// Keep the current anonymous uid when possible so DemoChatSeed docs remain
+  /// queryable via `members arrayContains uid`.
+  static Future<void> _signInAnonymouslyStable() async {
     final existing = _auth.currentUser;
     if (existing != null && existing.isAnonymous) {
+      debugPrint(
+        '[AuthService] Reusing anonymous uid ${existing.uid} for DEMO_AUTH',
+      );
+      return;
+    }
+    if (existing != null) {
       try {
         await _auth.signOut();
       } catch (_) {}
     }
-
-    try {
-      await _auth.signInWithEmailAndPassword(email: email, password: password);
-      return;
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'user-not-found' ||
-          e.code == 'invalid-credential' ||
-          e.code == 'wrong-password' ||
-          e.code == 'invalid-login-credentials') {
-        try {
-          await _auth.createUserWithEmailAndPassword(
-            email: email,
-            password: password,
-          );
-          return;
-        } on FirebaseAuthException catch (createErr) {
-          if (createErr.code == 'email-already-in-use') {
-            await _auth.signInWithEmailAndPassword(
-              email: email,
-              password: password,
-            );
-            return;
-          }
-          debugPrint(
-            '[AuthService] Email/password demo create failed: ${createErr.code}',
-          );
-        }
-      } else if (e.code == 'operation-not-allowed') {
-        debugPrint(
-          '[AuthService] Email/Password disabled in Firebase Console — '
-          'falling back to Anonymous (AI may reject this token).',
-        );
-      } else {
-        debugPrint('[AuthService] Email/password demo sign-in: ${e.code}');
-      }
-    }
-
     try {
       await _auth.signInAnonymously();
+      debugPrint(
+        '[AuthService] Signed in anonymously: ${_auth.currentUser?.uid}',
+      );
     } on FirebaseAuthException catch (e) {
       debugPrint('[AuthService] Anonymous sign-in failed: ${e.code}');
       throw Exception(
-        'Sign-in failed (${e.code}). '
-        'Enable Email/Password (recommended) or Anonymous in Firebase Console '
-        '(Authentication → Sign-in method).',
+        'Sign-in failed (${e.code}). Enable Anonymous sign-in in Firebase '
+        'Console (Authentication → Sign-in method).',
       );
     }
   }

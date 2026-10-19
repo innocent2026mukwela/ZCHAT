@@ -1,10 +1,14 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import '../config.dart';
 import '../utils/storage_errors.dart';
 import 'ai_service.dart';
+import 'demo_chat_seed.dart';
 import 'encryption_service.dart';
 import 'media_storage_service.dart';
 
@@ -683,39 +687,150 @@ class ChatService {
 
   // ── Streams ──────────────────────────────────────────────────────────────
 
+  /// When DEMO_AUTH Firestore seed is empty/flaky, merge in the 5 local sample
+  /// chats so the Chats tab is never blank for anonymous demo users.
+  static List<Map<String, dynamic>> _mergeDemoChats(
+    List<Map<String, dynamic>> firestoreDocs,
+    String myUid,
+  ) {
+    if (!AppConfig.demoAuth) return firestoreDocs;
+    if (firestoreDocs.length >= DemoChatSeed.requiredSampleCount) {
+      return firestoreDocs;
+    }
+    final local = DemoChatSeed.buildLocalChats(myUid);
+    final ids = firestoreDocs
+        .map((d) => d['id'] as String? ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final merged = List<Map<String, dynamic>>.from(firestoreDocs);
+    for (final chat in local) {
+      final id = chat['id'] as String? ?? '';
+      if (id.isEmpty || ids.contains(id)) continue;
+      merged.add(chat);
+    }
+    merged.sort((a, b) {
+      final aPinned = (a['pinned'] as bool?) == true;
+      final bPinned = (b['pinned'] as bool?) == true;
+      if (aPinned != bPinned) return aPinned ? -1 : 1;
+      final aTime =
+          (a['lastTime'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+      final bTime =
+          (b['lastTime'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+      return bTime.compareTo(aTime);
+    });
+    return merged;
+  }
+
   static Stream<List<Map<String, dynamic>>> chatsStream() {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      if (AppConfig.demoAuth) {
+        return Stream.value(DemoChatSeed.buildLocalChats('demo'));
+      }
+      return Stream.value(const []);
+    }
+
+    // DEMO_AUTH: emit local 5 immediately, then refresh from Firestore.
+    // Also swallow query errors (rules/network) so the list never goes blank.
+    if (AppConfig.demoAuth) {
+      return Stream<List<Map<String, dynamic>>>.multi((multi) {
+        multi.add(_mergeDemoChats(const [], uid));
+        final sub = _db
+            .collection('chats')
+            .where('members', arrayContains: uid)
+            .snapshots()
+            .listen(
+          (snap) async {
+            try {
+              final docs =
+                  snap.docs.map((d) => {...d.data(), 'id': d.id}).toList();
+              for (final doc in docs) {
+                if (doc['type'] == 'group') continue;
+                final members =
+                    List<String>.from(doc['members'] as List? ?? []);
+                final memberNames = Map<String, dynamic>.from(
+                    doc['memberNames'] as Map? ?? {});
+                var needsUpdate = false;
+                for (final memberUid in members) {
+                  if (memberUid == uid) continue;
+                  final stored = memberNames[memberUid] as String? ?? '';
+                  if (stored.isEmpty || stored == 'Unknown') {
+                    try {
+                      final userDoc =
+                          await _db.collection('users').doc(memberUid).get();
+                      final data = userDoc.data() ?? {};
+                      memberNames[memberUid] = data['fullName'] as String? ??
+                          data['displayName'] as String? ??
+                          data['phoneNumber'] as String? ??
+                          'Unknown';
+                      needsUpdate = true;
+                    } catch (_) {}
+                  }
+                }
+                doc['memberNames'] = memberNames;
+                if (needsUpdate) {
+                  _db.collection('chats').doc(doc['id'] as String).update({
+                    'memberNames': memberNames,
+                  }).catchError((_) {});
+                }
+              }
+              docs.sort((a, b) {
+                final aPinned = (a['pinned'] as bool?) == true;
+                final bPinned = (b['pinned'] as bool?) == true;
+                if (aPinned != bPinned) return aPinned ? -1 : 1;
+                final aTime =
+                    (a['lastTime'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+                final bTime =
+                    (b['lastTime'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+                return bTime.compareTo(aTime);
+              });
+              if (!multi.isClosed) multi.add(_mergeDemoChats(docs, uid));
+            } catch (e) {
+              debugPrint('[ChatService] chatsStream map failed: $e');
+              if (!multi.isClosed) multi.add(_mergeDemoChats(const [], uid));
+            }
+          },
+          onError: (Object e) {
+            debugPrint('[ChatService] chatsStream query error: $e');
+            if (!multi.isClosed) multi.add(_mergeDemoChats(const [], uid));
+          },
+        );
+        multi.onCancel = () => sub.cancel();
+      });
+    }
+
     return _db
         .collection('chats')
-        .where('members', arrayContains: _myUid)
+        .where('members', arrayContains: uid)
         .snapshots()
         .asyncMap((snap) async {
           final docs = snap.docs.map((d) => {...d.data(), 'id': d.id}).toList();
 
-          // Enrich memberNames for direct chats where name is 'Unknown' or missing
           for (final doc in docs) {
             if (doc['type'] == 'group') continue;
-            final members     = List<String>.from(doc['members'] as List? ?? []);
-            final memberNames = Map<String, dynamic>.from(doc['memberNames'] as Map? ?? {});
-            bool needsUpdate  = false;
+            final members = List<String>.from(doc['members'] as List? ?? []);
+            final memberNames =
+                Map<String, dynamic>.from(doc['memberNames'] as Map? ?? {});
+            var needsUpdate = false;
 
-            for (final uid in members) {
-              if (uid == _myUid) continue;
-              final stored = memberNames[uid] as String? ?? '';
+            for (final memberUid in members) {
+              if (memberUid == uid) continue;
+              final stored = memberNames[memberUid] as String? ?? '';
               if (stored.isEmpty || stored == 'Unknown') {
-                final userDoc = await _db.collection('users').doc(uid).get();
-                final data    = userDoc.data() ?? {};
-                final name    = data['fullName'] as String?
-                             ?? data['displayName'] as String?
-                             ?? data['phoneNumber'] as String?
-                             ?? 'Unknown';
-                memberNames[uid] = name;
-                needsUpdate      = true;
+                final userDoc =
+                    await _db.collection('users').doc(memberUid).get();
+                final data = userDoc.data() ?? {};
+                final name = data['fullName'] as String? ??
+                    data['displayName'] as String? ??
+                    data['phoneNumber'] as String? ??
+                    'Unknown';
+                memberNames[memberUid] = name;
+                needsUpdate = true;
               }
             }
 
             doc['memberNames'] = memberNames;
 
-            // Patch Firestore so the name is correct going forward
             if (needsUpdate) {
               _db.collection('chats').doc(doc['id'] as String).update({
                 'memberNames': memberNames,
@@ -723,13 +838,14 @@ class ChatService {
             }
           }
 
-          // Pinned first, then by lastTime desc
           docs.sort((a, b) {
             final aPinned = (a['pinned'] as bool?) == true;
             final bPinned = (b['pinned'] as bool?) == true;
             if (aPinned != bPinned) return aPinned ? -1 : 1;
-            final aTime = (a['lastTime'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
-            final bTime = (b['lastTime'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+            final aTime =
+                (a['lastTime'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+            final bTime =
+                (b['lastTime'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
             return bTime.compareTo(aTime);
           });
           return docs;
@@ -739,15 +855,68 @@ class ChatService {
   /// Streams the most recent [limit] messages (newest fetched, returned oldest→
   /// newest for display). Raise [limit] to page in older history. Loading the
   /// whole history on every chat open is slow and costly on long chats.
-  static Stream<List<Map<String, dynamic>>> messagesStream(String chatId, {int limit = 50}) {
+  static Stream<List<Map<String, dynamic>>> messagesStream(String chatId,
+      {int limit = 50}) {
+    final uid = _auth.currentUser?.uid ?? '';
+
+    if (AppConfig.demoAuth && DemoChatSeed.isSampleChatId(chatId)) {
+      return Stream<List<Map<String, dynamic>>>.multi((multi) {
+        multi.add(DemoChatSeed.buildLocalMessages(chatId, uid));
+        final sub = _db
+            .collection('chats')
+            .doc(chatId)
+            .collection('messages')
+            .orderBy('createdAt', descending: true)
+            .limit(limit)
+            .snapshots()
+            .listen(
+          (snap) async {
+            try {
+              if (snap.docs.isEmpty) {
+                if (!multi.isClosed) {
+                  multi.add(DemoChatSeed.buildLocalMessages(chatId, uid));
+                }
+                return;
+              }
+              final docs = snap.docs
+                  .map((d) => Map<String, dynamic>.from(d.data()))
+                  .toList()
+                  .reversed
+                  .toList();
+              for (final doc in docs) {
+                final raw = doc['text'] as String? ?? '';
+                if (raw.isNotEmpty) {
+                  doc['text'] =
+                      await EncryptionService.decrypt(chatId, raw);
+                }
+              }
+              if (!multi.isClosed) multi.add(docs);
+            } catch (e) {
+              debugPrint('[ChatService] messagesStream map failed: $e');
+              if (!multi.isClosed) {
+                multi.add(DemoChatSeed.buildLocalMessages(chatId, uid));
+              }
+            }
+          },
+          onError: (Object e) {
+            debugPrint('[ChatService] messagesStream error: $e');
+            if (!multi.isClosed) {
+              multi.add(DemoChatSeed.buildLocalMessages(chatId, uid));
+            }
+          },
+        );
+        multi.onCancel = () => sub.cancel();
+      });
+    }
+
     return _db
-        .collection('chats').doc(chatId)
+        .collection('chats')
+        .doc(chatId)
         .collection('messages')
         .orderBy('createdAt', descending: true)
         .limit(limit)
         .snapshots()
         .asyncMap((snap) async {
-          // Fetched newest-first for the limit; reverse to chronological order.
           final docs = snap.docs
               .map((d) => Map<String, dynamic>.from(d.data()))
               .toList()
@@ -755,7 +924,9 @@ class ChatService {
               .toList();
           for (final doc in docs) {
             final raw = doc['text'] as String? ?? '';
-            if (raw.isNotEmpty) doc['text'] = await EncryptionService.decrypt(chatId, raw);
+            if (raw.isNotEmpty) {
+              doc['text'] = await EncryptionService.decrypt(chatId, raw);
+            }
           }
           return docs;
         });

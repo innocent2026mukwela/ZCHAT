@@ -15,10 +15,10 @@ import 'package:flutter/foundation.dart';
 /// Local auth UX (no Node SMS) — preferred for FYP demos:
 ///
 ///   Default ON — OTP is generated locally (shown as a session code in OTP UI).
-///   Sign-in prefers a **non-anonymous** Firebase user (Node custom token via
-///   `/api/auth/demo-login` or verify-otp, else email/password per phone) so AI
-///   ID tokens match the old real-auth path. Anonymous is last-resort only.
-///   Profiles are marked `demo: true` and discoverable via New Chat peers.
+///   Sign-in: Node custom token if reachable, else **Firebase Anonymous**
+///   (Email/Password is not required — many FYP projects lack Console owner
+///   access). AI sends `X-ZChat-Demo-Auth: 1` so Node can accept anonymous.
+///   Chats tab always shows 5 sample threads (Firestore seed + local fallback).
 ///   Phone demo:
 ///     `flutter run --dart-define-from-file=dart_defines.demo.json`
 ///   Turn off for real backend OTP:
@@ -31,8 +31,8 @@ import 'package:flutter/foundation.dart';
 /// SUPABASE_ANON_KEY via dart-define. AI features still need BACKEND_URL.
 class AppConfig {
   /// When true, login skips the Node OTP API and uses a local OTP plus
-  /// Firebase Anonymous Auth. Default true for demos. Disable for production:
-  /// `--dart-define=DEMO_AUTH=false`.
+  /// Firebase Anonymous Auth (custom token if Node can mint one). Default true
+  /// for demos. Disable for production: `--dart-define=DEMO_AUTH=false`.
   static const demoAuth = bool.fromEnvironment(
     'DEMO_AUTH',
     defaultValue: true,
@@ -94,8 +94,8 @@ class AppConfig {
     if (kReleaseMode) return;
     if (demoAuth) {
       debugPrint(
-        '[AppConfig] DEMO_AUTH=true — login uses local OTP + anonymous Firebase. '
-        'Disable with --dart-define=DEMO_AUTH=false',
+        '[AppConfig] DEMO_AUTH=true — local OTP + anonymous Firebase; '
+        'AI sends X-ZChat-Demo-Auth. Disable with --dart-define=DEMO_AUTH=false',
       );
     }
     if (!zegoConfigured) {

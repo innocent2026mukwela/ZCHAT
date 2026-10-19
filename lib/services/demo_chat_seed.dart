@@ -22,6 +22,142 @@ class DemoChatSeed {
 
   static const _prefsKeyPrefix = 'sample_chats_seeded_';
 
+  /// How many sample chats the Chats tab must show in DEMO_AUTH.
+  static const requiredSampleCount = 5;
+
+  /// Stable local/Firestore id for a sample 1:1 chat (does not collide with
+  /// real chats, which use `sorted(uidA, uidB).join('_')`).
+  static String sampleChatId(String myUid, String peerUid) =>
+      'sample_${myUid}_$peerUid';
+
+  static bool isSampleChatId(String chatId) => chatId.startsWith('sample_');
+
+  /// In-memory chat rows for [ChatService.chatsStream] when Firestore seed
+  /// fails or is slow. Always available in DEMO_AUTH — no network required.
+  static List<Map<String, dynamic>> buildLocalChats(
+    String myUid, {
+    String myName = 'You',
+  }) {
+    final now = DateTime.now();
+    return _peers.map((peer) {
+      final last = peer.messages.last;
+      final lastAt = now.subtract(peer.lastAgo);
+      final ids = [myUid, peer.uid]..sort();
+      final chatId = sampleChatId(myUid, peer.uid);
+      return <String, dynamic>{
+        'id': chatId,
+        'type': 'direct',
+        'members': ids,
+        'memberUids': ids,
+        'memberNames': {myUid: myName, peer.uid: peer.name},
+        'name': '',
+        'lastMessage': last.text,
+        'lastSenderUid': last.fromMe ? myUid : peer.uid,
+        'lastTime': Timestamp.fromDate(lastAt),
+        'unreadCount': {myUid: peer.unreadForMe, peer.uid: 0},
+        'pinned': false,
+        'archived': {myUid: false, peer.uid: false},
+        'sampleSeed': true,
+        'localDemo': true,
+      };
+    }).toList();
+  }
+
+  /// In-memory messages for a [sampleChatId] when Firestore has none.
+  static List<Map<String, dynamic>> buildLocalMessages(
+    String chatId,
+    String myUid, {
+    String myName = 'You',
+  }) {
+    final peerUid = peerUidFromSampleChatId(chatId, myUid);
+    _SeedPeer? peer;
+    for (final p in _peers) {
+      if (p.uid == peerUid) {
+        peer = p;
+        break;
+      }
+    }
+    if (peer == null) return const [];
+
+    final now = DateTime.now();
+    final lastAt = now.subtract(peer.lastAgo);
+    final stepMinutes = peer.messages.length > 1
+        ? (peer.spanMinutes ~/ (peer.messages.length - 1)).clamp(1, 180)
+        : 5;
+    final step = Duration(minutes: stepMinutes);
+    final unread = peer.unreadForMe;
+    final out = <Map<String, dynamic>>[];
+
+    for (var i = 0; i < peer.messages.length; i++) {
+      final msg = peer.messages[i];
+      final createdAt =
+          lastAt.subtract(step * (peer.messages.length - 1 - i));
+      final fromMe = msg.fromMe;
+      final senderUid = fromMe ? myUid : peer.uid;
+      final senderName = fromMe ? myName : peer.name;
+      final readBy = <String>[senderUid];
+      if (fromMe || unread == 0) {
+        if (!readBy.contains(myUid)) readBy.add(myUid);
+      }
+      final id = 'sample_msg_$i';
+      out.add({
+        'id': id,
+        'chatId': chatId,
+        'senderUid': senderUid,
+        'senderName': senderName,
+        'text': msg.text,
+        'type': 'text',
+        'imageUrl': null,
+        'audioUrl': null,
+        'voiceDuration': null,
+        'reactions': {},
+        'readBy': readBy,
+        'mentions': [],
+        'createdAt': Timestamp.fromDate(createdAt),
+        'replyToId': null,
+        'replyToText': null,
+        'replyToSenderName': null,
+        'deleted': false,
+        'edited': false,
+        'viewOnce': false,
+        'viewOnceViewedBy': [],
+        'sampleSeed': true,
+        'localDemo': true,
+      });
+    }
+    return out;
+  }
+
+  /// `sample_{myUid}_{peerUid}` → peerUid (peer uids never contain `_` in seed data).
+  static String? peerUidFromSampleChatId(String chatId, String myUid) {
+    final prefix = 'sample_${myUid}_';
+    if (!chatId.startsWith(prefix)) return null;
+    final rest = chatId.substring(prefix.length);
+    // Drop optional timestamp suffix from older force-reseed attempts.
+    final peer = rest.split('_').first;
+    return peer.isEmpty ? null : peer;
+  }
+
+  /// Clears the "already seeded" markers and retries Firestore writes.
+  /// Local demo chats still show via [buildLocalChats] regardless.
+  static Future<void> forceReseed() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    final myUid = user.uid;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('$_prefsKeyPrefix$myUid');
+    } catch (_) {}
+    try {
+      await _db.collection('users').doc(myUid).set(
+        {'sampleChatsSeeded': FieldValue.delete()},
+        SetOptions(merge: true),
+      );
+    } catch (_) {}
+    _running = false;
+    await ensureSeeded();
+  }
+
   /// Call after auth when the chat list first loads. Safe to invoke multiple times.
   static Future<void> ensureSeeded() async {
     if (!AppConfig.demoAuth) return;
@@ -46,30 +182,45 @@ class DemoChatSeed {
 
     _running = true;
     try {
-      // Gate on real sample chats (members query), not just a prefs/Firestore
-      // flag. Stale sampleChatsSeeded after encrypt failure skipped seeding
-      // forever while ZFeed dummy posts still appeared.
-      if (await _hasSampleChats(myUid)) {
+      for (var attempt = 1; attempt <= 3; attempt++) {
+        final count = await _countSampleChats(myUid);
+        if (count >= requiredSampleCount) {
+          await _markSeeded(myUid);
+          debugPrint('[DemoChatSeed] OK — $count sample chats for $myUid');
+          return;
+        }
+
+        debugPrint(
+          '[DemoChatSeed] Attempt $attempt — have $count / '
+          '$requiredSampleCount for $myUid',
+        );
+
+        final myName = await _resolveMyName(myUid);
+        final now = DateTime.now();
+        for (final peer in _peers) {
+          try {
+            await _seedChat(
+              myUid: myUid,
+              myName: myName,
+              peer: peer,
+              now: now,
+            );
+          } catch (e, st) {
+            debugPrint('[DemoChatSeed] peer ${peer.uid} failed: $e\n$st');
+          }
+        }
+      }
+
+      final finalCount = await _countSampleChats(myUid);
+      if (finalCount >= requiredSampleCount) {
         await _markSeeded(myUid);
-        return;
-      }
-
-      final myName = await _resolveMyName(myUid);
-      final now = DateTime.now();
-
-      for (final peer in _peers) {
-        await _seedChat(myUid: myUid, myName: myName, peer: peer, now: now);
-      }
-
-      if (!await _hasSampleChats(myUid)) {
-        throw StateError(
-          'Sample chats were not readable after seed '
-          '(check Firestore rules / network for chats writes).',
+        debugPrint('[DemoChatSeed] Seeded $finalCount chats for $myUid');
+      } else {
+        debugPrint(
+          '[DemoChatSeed] Firestore has $finalCount sample chats — '
+          'ChatService will show local fallback',
         );
       }
-
-      await _markSeeded(myUid);
-      debugPrint('[DemoChatSeed] Seeded ${_peers.length} chats for $myUid');
     } catch (e, st) {
       debugPrint('[DemoChatSeed] Seed failed: $e\n$st');
     } finally {
@@ -77,20 +228,23 @@ class DemoChatSeed {
     }
   }
 
-  /// True when this user already has at least one `sampleSeed` chat in the list.
-  static Future<bool> _hasSampleChats(String myUid) async {
+  static Future<int> _countSampleChats(String myUid) async {
     try {
       final snap = await _db
           .collection('chats')
           .where('members', arrayContains: myUid)
           .limit(40)
           .get();
-      return snap.docs.any((d) => d.data()['sampleSeed'] == true);
+      return snap.docs.where((d) => d.data()['sampleSeed'] == true).length;
     } catch (e) {
-      debugPrint('[DemoChatSeed] hasSampleChats check failed: $e');
-      return false;
+      debugPrint('[DemoChatSeed] countSampleChats failed: $e');
+      return 0;
     }
   }
+
+  /// True when this user already has enough `sampleSeed` chats in the list.
+  static Future<bool> _hasSampleChats(String myUid) async =>
+      (await _countSampleChats(myUid)) >= requiredSampleCount;
 
   static Future<void> _markSeeded(String myUid) async {
     try {
@@ -133,7 +287,7 @@ class DemoChatSeed {
     // Dedicated sample ids (not the sorted uid pair used by real 1:1 chats).
     // After deleteChat() removes the user from `members`, the old doc still
     // exists but is unreadable — fall through to a fresh sample_* id.
-    var chatId = 'sample_${myUid}_${peer.uid}';
+    var chatId = sampleChatId(myUid, peer.uid);
     var chatRef = _db.collection('chats').doc(chatId);
 
     DocumentSnapshot<Map<String, dynamic>>? existing;
@@ -159,9 +313,8 @@ class DemoChatSeed {
         : 5;
     final step = Duration(minutes: stepMinutes);
 
-    // One batch so a mid-seed failure never leaves an orphan chat shell without
-    // messages (and never depends on EncryptionService round-trips).
-    final batch = _db.batch();
+    // Write the chat shell FIRST (own commit) so the Chats list populates even
+    // if the messages batch is denied / flaky under anonymous auth.
     final chatPayload = <String, dynamic>{
       'id': chatId,
       'type': 'direct',
@@ -180,7 +333,7 @@ class DemoChatSeed {
 
     var needMessages = true;
     if (existing == null || !existing.exists) {
-      batch.set(chatRef, chatPayload);
+      await chatRef.set(chatPayload);
     } else {
       final data = existing.data() ?? {};
       final members = List<String>.from(data['members'] as List? ?? []);
@@ -192,7 +345,7 @@ class DemoChatSeed {
         // Self-join path only — rules hasOnly these membership keys when the
         // caller is not yet in resource.data.members. Full chatPayload merge
         // would be denied.
-        batch.update(chatRef, {
+        await chatRef.update({
           'members': FieldValue.arrayUnion([myUid]),
           'memberUids': FieldValue.arrayUnion([myUid]),
           'memberNames.$myUid': myName,
@@ -200,8 +353,7 @@ class DemoChatSeed {
           'archived.$myUid': false,
         });
       } else if (incomplete) {
-        // Already a member — may update any fields.
-        batch.set(chatRef, chatPayload, SetOptions(merge: true));
+        await chatRef.set(chatPayload, SetOptions(merge: true));
       }
 
       final msgs = await chatRef.collection('messages').limit(1).get();
@@ -209,46 +361,45 @@ class DemoChatSeed {
       if (!needMessages && !missingMe && !incomplete) return;
     }
 
-    if (needMessages) {
-      for (var i = 0; i < thread.length; i++) {
-        final msg = thread[i];
-        final createdAt = lastAt.subtract(step * (thread.length - 1 - i));
-        final fromMe = msg.fromMe;
-        final senderUid = fromMe ? myUid : peer.uid;
-        final senderName = fromMe ? myName : peer.name;
-        // Deterministic ids so retries do not duplicate messages.
-        final msgRef = chatRef.collection('messages').doc('sample_msg_$i');
+    if (!needMessages) return;
 
-        final readBy = <String>[senderUid];
-        if (fromMe || unread == 0) {
-          if (!readBy.contains(myUid)) readBy.add(myUid);
-        }
+    final batch = _db.batch();
+    for (var i = 0; i < thread.length; i++) {
+      final msg = thread[i];
+      final createdAt = lastAt.subtract(step * (thread.length - 1 - i));
+      final fromMe = msg.fromMe;
+      final senderUid = fromMe ? myUid : peer.uid;
+      final senderName = fromMe ? myName : peer.name;
+      final msgRef = chatRef.collection('messages').doc('sample_msg_$i');
 
-        batch.set(msgRef, {
-          'id': msgRef.id,
-          'chatId': chatId,
-          'senderUid': senderUid,
-          'senderName': senderName,
-          // Plaintext on purpose for sample seeds (see class doc).
-          'text': msg.text,
-          'type': 'text',
-          'imageUrl': null,
-          'audioUrl': null,
-          'voiceDuration': null,
-          'reactions': {},
-          'readBy': readBy,
-          'mentions': [],
-          'createdAt': Timestamp.fromDate(createdAt),
-          'replyToId': null,
-          'replyToText': null,
-          'replyToSenderName': null,
-          'deleted': false,
-          'edited': false,
-          'viewOnce': false,
-          'viewOnceViewedBy': [],
-          'sampleSeed': true,
-        });
+      final readBy = <String>[senderUid];
+      if (fromMe || unread == 0) {
+        if (!readBy.contains(myUid)) readBy.add(myUid);
       }
+
+      batch.set(msgRef, {
+        'id': msgRef.id,
+        'chatId': chatId,
+        'senderUid': senderUid,
+        'senderName': senderName,
+        'text': msg.text,
+        'type': 'text',
+        'imageUrl': null,
+        'audioUrl': null,
+        'voiceDuration': null,
+        'reactions': {},
+        'readBy': readBy,
+        'mentions': [],
+        'createdAt': Timestamp.fromDate(createdAt),
+        'replyToId': null,
+        'replyToText': null,
+        'replyToSenderName': null,
+        'deleted': false,
+        'edited': false,
+        'viewOnce': false,
+        'viewOnceViewedBy': [],
+        'sampleSeed': true,
+      });
     }
     await batch.commit();
   }

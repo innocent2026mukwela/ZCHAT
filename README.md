@@ -26,7 +26,7 @@ flutter run -d chrome --dart-define-from-file=dart_defines.demo.json ^
   --dart-define=SUPABASE_ANON_KEY=YOUR_ANON_KEY
 ```
 
-`dart_defines.demo.json` sets `DEMO_AUTH=true` and `BACKEND_URL=http://localhost:5000`. After upgrading from the old anonymous demo login, **sign out once and sign in again** so AI gets a fresh non-anonymous ID token.
+`dart_defines.demo.json` sets `DEMO_AUTH=true` and `BACKEND_URL=http://localhost:5000`. **Sign out once and sign in again** after pulling so anonymous auth + sample chats re-seed under the current uid.
 
 ### Android emulator
 
@@ -99,56 +99,54 @@ See `lib/config.dart`. All environment overrides use `--dart-define`:
 - **Student** → `/home` after OTP (or profile setup)
 - **Lecturer** → `/lecturer/home` after OTP (or profile setup)
 
-## Demo auth (silent local OTP — keeps AI / media working)
+## Demo auth (silent local OTP + anonymous Firebase)
 
-Demo mode is **on by default** (`DEMO_AUTH=true`). Login shows a local verification code; any 6-digit code works. **This is not Anonymous-only anymore** (Anonymous broke AI when Node rejects `sign_in_provider=anonymous`).
+Demo mode is **on by default** (`DEMO_AUTH=true`). Login shows a local verification code; any 6-digit code works.
 
 On verify, the app tries in order:
 
-1. `POST /api/auth/demo-login` `{ phoneNumber }` → `firebaseToken` (best — same custom-token path as real OTP)
-2. `POST /api/auth/verify-otp` with the entered code (works if your Node demo/dev mode accepts any OTP)
-3. Firebase **Email/Password** account `demo_<digits>@zchat.demo` (stable uid per phone — enable Email/Password in Firebase Console)
-4. Firebase Anonymous (last resort; AI may still fail if Node blocks anonymous tokens)
+1. `POST /api/auth/demo-login` `{ phoneNumber }` → `firebaseToken` (if Node is up)
+2. `POST /api/auth/verify-otp` with the entered code (if Node accepts any OTP in demo)
+3. **Firebase Anonymous** (stable — keeps the same uid; **Email/Password is not required**)
 
-Firestore rules already allow any signed-in user (`request.auth != null`), including demo accounts. Media still uses **Supabase** (not Firebase Storage).
+Chats tab always shows **5 sample conversations** (Firestore seed when possible; otherwise an in-memory fallback wired into `ChatService.chatsStream`).
 
-**1:1 chat between two demo accounts**
+AI requests send `Authorization: Bearer <anonymous-or-custom-token>` **and** `X-ZChat-Demo-Auth: 1`.
 
-1. Run the app on two devices/browsers against the **same Firebase project**.
-2. Sign in with **different phone numbers** (complete profile with distinct names).
-3. Open **New Chat** → use the **Demo peers** list (or search by phone/name). Tap a peer to open a direct chat.
-4. Contact discovery does **not** need the Node backend in demo mode (Firestore lookup).
+Firestore rules already allow any signed-in user (`request.auth != null`), including anonymous. Media still uses **Supabase**.
 
 Turn demo auth off for real OTP: `--dart-define=DEMO_AUTH=false`.
 
 ### Node backend (lives outside this Flutter repo)
 
-ZCHAT-main has **no** `backend/` folder. On Innocent’s PC the API is usually under a separate “FINAL YEAR PROJECT” / Node folder. For Chrome + DEMO_AUTH:
+ZCHAT-main has **no** `backend/` folder. Copy the helper from [`tools/backend_accept_demo_auth.js`](tools/backend_accept_demo_auth.js) into your API auth middleware.
 
-**CORS** — allow the Flutter web origin (not only `*`'s credentials mode). Example Express:
+**CORS** (Chrome localhost):
 
 ```js
 app.use(cors({
   origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-ZChat-Demo-Auth'],
 }));
 ```
 
-**AI env (server `.env`)** — typical:
+**ONE middleware change** — stop rejecting anonymous; accept the demo header:
+
+```js
+// BAD: if (decoded.firebase?.sign_in_provider === 'anonymous') return 401
+// GOOD: use resolveDemoOrFirebaseUser from tools/backend_accept_demo_auth.js
+```
+
+**AI env (server `.env`)**:
 
 ```
-ANTHROPIC_API_KEY=...          # or your Claude/OpenAI key name
+ANTHROPIC_API_KEY=...
+ALLOW_DEMO_AUTH=true
 FIREBASE_PROJECT_ID=...
 GOOGLE_APPLICATION_CREDENTIALS=./serviceAccount.json
-# Optional if you add the route the Flutter client calls first:
-# DEMO_LOGIN=true
 ```
 
-**Recommended Node route** (restores old custom-token login without SMS):
-
-`POST /api/auth/demo-login` body `{ "phoneNumber": "+260…" }` → `{ "firebaseToken", "needsProfile", "user" }` using Firebase Admin `createCustomToken`.
-
-Do **not** reject `sign_in_provider === 'anonymous'` without also supporting password/custom — or require Email/Password / demo-login above.
+Without `ANTHROPIC_API_KEY` (or your Claude key), the API will answer auth/health but AI chat replies will fail.
 
 ## Supabase Storage (media uploads)
 
@@ -216,7 +214,7 @@ flutter build apk --debug \
 
 ## AI assistant
 
-AI features call the Node backend (`BACKEND_URL`) with the Firebase ID token. With no API running (or CORS blocking Chrome), AI screens show **“AI requires backend”**. Start the API, allow localhost Chrome origins, and use the demo login path above so the token is not Anonymous-only.
+AI features call the Node backend (`BACKEND_URL`) with the Firebase ID token **and** `X-ZChat-Demo-Auth: 1` when `DEMO_AUTH=true`. Apply [`tools/backend_accept_demo_auth.js`](tools/backend_accept_demo_auth.js) so anonymous tokens are not rejected. With no API running (or CORS blocking Chrome), AI screens show **“AI requires backend”**.
 
 ## Notes
 

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import '../config.dart';
@@ -18,9 +19,9 @@ class AiService {
   /// Clear message shown when the Node AI API is not reachable.
   static String get backendRequiredMessage =>
       'AI requires the ZCHAT backend at $_serverBase. '
-      'Start the API with CORS allowing your Chrome origin '
-      '(e.g. http://localhost:*), pass --dart-define=BACKEND_URL=…, '
-      'and sign in again so the app has a non-anonymous Firebase ID token.';
+      'Start Node on port 5000, allow CORS for http://localhost:* '
+      '(headers: Content-Type, Authorization, X-ZChat-Demo-Auth), '
+      'and apply tools/backend_accept_demo_auth.js so anonymous DEMO_AUTH works.';
 
   /// Lightweight reachability probe (cached ~20s). Does not throw.
   /// Any HTTP response (including 401/404) counts as reachable.
@@ -88,31 +89,44 @@ class AiService {
     final lower = raw.toLowerCase();
     if (lower.contains('anonymous') ||
         lower.contains('sign_in_provider') ||
-        (lower.contains('unauthorized') && lower.contains('auth'))) {
-      return 'AI rejected this login token. Sign out and sign in again '
-          '(demo login now uses a non-anonymous Firebase user). '
-          'If it still fails, enable Email/Password in Firebase Console '
-          'or add POST /api/auth/demo-login on the Node API.';
+        lower.contains('unauthorized') ||
+        lower.contains('401')) {
+      return 'AI auth rejected. DEMO_AUTH sends X-ZChat-Demo-Auth: 1 plus '
+          'your anonymous Firebase token — patch the Node middleware with '
+          'tools/backend_accept_demo_auth.js (do not reject anonymous). '
+          'Also allow that header in CORS.';
     }
     return raw;
   }
 
-  /// Fetches the current Firebase ID token and returns auth + content headers.
+  /// Auth headers for Node AI. DEMO_AUTH always adds `X-ZChat-Demo-Auth: 1`
+  /// so the backend can accept anonymous Firebase (or demo-only) sessions.
   static Future<Map<String, String>> _authHeaders({
     bool forceRefresh = false,
   }) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) throw Exception('Not authenticated');
-    // DEMO_AUTH used to leave anonymous sessions; force-refresh after re-login
-    // so Node firebase-admin sees the current provider (custom / password).
-    final token = await user.getIdToken(forceRefresh);
-    if (token == null || token.isEmpty) {
-      throw Exception('Missing Firebase ID token. Sign out and sign in again.');
-    }
-    return {
-      'Content-Type':  'application/json',
-      'Authorization': 'Bearer $token',
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
     };
+    if (AppConfig.demoAuth) {
+      headers['X-ZChat-Demo-Auth'] = '1';
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        final token = await user.getIdToken(forceRefresh);
+        if (token != null && token.isNotEmpty) {
+          headers['Authorization'] = 'Bearer $token';
+        }
+      } catch (e) {
+        debugPrint('[AiService] getIdToken failed: $e');
+      }
+    }
+
+    if (!headers.containsKey('Authorization') && !AppConfig.demoAuth) {
+      throw Exception('Not authenticated');
+    }
+    return headers;
   }
 
   /// Sends the full conversation history to Claude and returns the reply
